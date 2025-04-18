@@ -1,9 +1,9 @@
-from detection_example.shared.effects_utils import make_log_effect
+from shared.effects_utils import make_log_effect
 from pystorex import create_effect, Action
 from reactivex import operators as ops
-from detection_example.shared.constants import FENCE_STATUS
-from detection_example.shared import store
-from detection_example.shared.detection_actions import visual_recognition
+from shared.constants import FENCE_STATUS
+from shared import store
+from shared.detection_actions import visual_recognition
 from .fence_selectors import get_intrusion_persons, get_fence_warning_persons
 from .fence_actions import log_intrusion, log_fence_warning
 

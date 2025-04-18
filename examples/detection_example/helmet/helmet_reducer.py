@@ -1,14 +1,14 @@
 from pydantic import BaseModel
 from typing import Dict, List
 from pystorex import create_reducer, on
-from detection_example.shared.constants import (
+from shared.constants import (
     HELMET_STATUS,
     VIOLATION_THRESHOLD,
     NORMAL_THRESHOLD,
     NO_PERSON_THRESHOLD
 )
-from detection_example.shared.utils import generate_person_id
-from detection_example.shared.detection_actions import visual_recognition
+from shared.utils import generate_person_id
+from shared.detection_actions import visual_recognition
 
 # ========== Model Definitions ==========
 class PersonHelmetState(BaseModel):

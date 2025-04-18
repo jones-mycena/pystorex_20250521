@@ -28,34 +28,6 @@ def state_copy(state: CounterState):
     return new_state, now
 
 # ====== Handlers ======
-# def counter_handler(state: CounterState, action) -> CounterState:
-    # 使用 Pydantic deep copy 確保 immutable。
-    new_state = state.copy(deep=True)
-    now = time.time()
-
-    if action.type == increment.type:
-        new_state.count += 1
-        new_state.last_updated = now
-    elif action.type == decrement.type:
-        new_state.count -= 1
-        new_state.last_updated = now
-    elif action.type == reset.type:
-        new_state.count = action.payload
-        new_state.last_updated = now
-    elif action.type == increment_by.type:
-        new_state.count += action.payload
-        new_state.last_updated = now
-    elif action.type == load_count_request.type:
-        new_state.loading = True
-        new_state.error = None
-    elif action.type == load_count_success.type:
-        new_state.loading = False
-        new_state.count = action.payload
-        new_state.last_updated = now
-    elif action.type == load_count_failure.type:
-        new_state.loading = False
-        new_state.error = action.payload
-    return new_state
 def increment_handler(state: CounterState, action) -> CounterState:
     if action.type == increment.type:
         new_state, now = state_copy(state)
@@ -115,18 +87,6 @@ def load_count_failure_handler(state: CounterState, action) -> CounterState:
     
     
 # ====== Reducer ======
-
-# counter_reducer = create_reducer(
-#     CounterState(),
-#     on(increment, counter_handler),
-#     on(decrement, counter_handler),
-#     on(reset, counter_handler),
-#     on(increment_by, counter_handler),
-#     on(load_count_request, counter_handler),
-#     on(load_count_success, counter_handler),
-#     on(load_count_failure, counter_handler),
-# )
-
 counter_reducer = create_reducer(
     CounterState(),
     on(increment, increment_handler),

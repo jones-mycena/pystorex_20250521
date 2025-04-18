@@ -1,8 +1,8 @@
-from detection_example.shared.effects_utils import make_log_effect
+from shared.effects_utils import make_log_effect
 from pystorex import create_effect, Action
 from reactivex import operators as ops
-from detection_example.shared.constants import HELMET_STATUS
-from detection_example.shared import store
+from shared.constants import HELMET_STATUS
+from shared import store
 from .helmet_selectors import get_violation_persons, get_warning_persons
 from .helmet_actions import log_violation, log_warning
 

@@ -1,5 +1,5 @@
 from pystorex import create_selector
-from detection_example.shared.constants import FENCE_STATUS
+from shared.constants import FENCE_STATUS
 
 # 先拿到那個 feature state (InitialState instance)
 get_fence_status_state = lambda root_state: root_state["fence_status"]

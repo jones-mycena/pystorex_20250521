@@ -1,17 +1,17 @@
 import sys
 sys.path.append(r"c:\work\pystorex")
 import time
-from detection_example.fence.fence_effects import FenceEffects
-from detection_example.helmet.helmet_effects import HelmetEffects
-from detection_example.shared.detection_store import store
-from detection_example.shared.utils import create_sample_data
-from detection_example.shared.detection_actions import visual_recognition
-from detection_example.helmet.helmet_selectors import get_violation_persons
-from detection_example.fence.fence_selectors import get_intrusion_persons
+from fence.fence_effects import FenceEffects
+from helmet.helmet_effects import HelmetEffects
+from shared.detection_store import store
+from shared.utils import create_sample_data
+from shared.detection_actions import visual_recognition
+from helmet.helmet_selectors import get_violation_persons
+from fence.fence_selectors import get_intrusion_persons
 from pystorex.store_selectors import create_selector
 
-from detection_example.helmet.helmet_reducer   import helmet_status_reducer
-from detection_example.fence.fence_reducer   import fence_status_reducer
+from helmet.helmet_reducer   import helmet_status_reducer
+from fence.fence_reducer   import fence_status_reducer
 
 store.register_root({
     "helmet_status": helmet_status_reducer,

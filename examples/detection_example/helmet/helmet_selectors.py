@@ -1,5 +1,5 @@
 from pystorex import create_selector
-from detection_example.shared.constants import HELMET_STATUS
+from shared.constants import HELMET_STATUS
 
 get_helmet_status_state = lambda state: state["helmet_status"]
 get_helmet_states = create_selector(

@@ -1,8 +1,8 @@
-# from detection_example.fence import FenceEffects
-# from detection_example.helmet import HelmetEffects
+# from fence import FenceEffects
+# from helmet import HelmetEffects
 from pystorex import create_store
-# from detection_example.helmet.helmet_reducer import helmet_status_reducer
-# from detection_example.fence.fence_reducer import fence_status_reducer
+# from helmet.helmet_reducer import helmet_status_reducer
+# from fence.fence_reducer import fence_status_reducer
 
 store = create_store()
 

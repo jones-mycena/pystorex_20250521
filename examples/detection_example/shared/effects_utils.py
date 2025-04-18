@@ -1,7 +1,7 @@
 # shared/effects_utils.py
 from reactivex import operators as ops, compose
-from detection_example.shared.detection_store import store
-from detection_example.shared.detection_actions import visual_recognition
+from shared.detection_store import store
+from shared.detection_actions import visual_recognition
 
 def make_log_effect(selector, action_creator):
     """
