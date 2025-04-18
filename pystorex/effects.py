@@ -15,16 +15,24 @@ class Effect:
         self.source = source
 
 
-def create_effect(
-    effect_fn: Callable[[Observable], Observable], *, dispatch: bool = True
-):
+def create_effect(effect_fn=None, *, dispatch: bool = True):
     """
-    创建一个Effect
+    用法：
+      @create_effect
+      def foo(action$): ...
+    或
+      @create_effect(dispatch=False)
+      def bar(action$): ...
+    """
+    # 如果没有直接给函数，就返回一个 decorator
+    if effect_fn is None:
 
-    Args:
-        effect_fn: 接收 action 流并返回一个新的 Observable
-    """
-    # 如果 fn 定義時第一個參數叫 self，就當作 instance method
+        def decorator(fn):
+            return create_effect(fn, dispatch=dispatch)
+
+        return decorator
+
+    # 下面是原来逻辑，只不过把 dispatch 标记上去
     is_instance_method = (
         inspect.isfunction(effect_fn)
         and effect_fn.__code__.co_varnames
@@ -33,18 +41,17 @@ def create_effect(
 
     @functools.wraps(effect_fn)
     def wrapper(*args, **kwargs):
-        # 取最後一個參數當作 action_stream
-        if not args:
-            raise TypeError("Effect wrapper requires at least one arg (action_stream)")
-        if is_instance_method:
-            # args == (self, action_stream)
-            return Effect(effect_fn(*args, **kwargs))
-        else:
-            # args could be (action_stream,) or (self, action_stream)
-            action_stream = args[-1]
-            return Effect(effect_fn(action_stream))
+        # 拿到实际的 action_stream 参数（最后那个）
+        action_stream = args[-1]
+        # 调用原函数，生成 Observable
+        source = (
+            effect_fn(*args, **kwargs)
+            if is_instance_method
+            else effect_fn(action_stream)
+        )
+        return Effect(source)
 
-    # 標記為 effect
+    # 标记这个 wrapper 是一个 Effect，并记录 dispatch 标志
     wrapper.is_effect = True
     wrapper.dispatch = dispatch
     wrapper.is_instance_method = is_instance_method
@@ -113,14 +120,14 @@ class EffectsManager:
             for name, member in inspect.getmembers(module):
                 if getattr(member, "is_effect", False):
                     eff: Effect = member(self.store._action_subject)
-                    sub = eff.source.pipe(
-                        ops.catch(self._handle_effect_error(module, name)),
+                    subscription = eff.source.pipe(
+                        ops.catch(self._handle_effect_error(module, name))
                     ).subscribe(
                         on_next=self._dispatch_if_action(module, member),
                         on_error=lambda e: print(f"[Effect Error] {e}"),
                     )
-                    self._subs_by_module[module].append(sub)
-                    self._subs_by_effect[(module, name)] = sub
+                    self._subs_by_module[module].append(subscription)
+                    self._subs_by_effect[(module, name)] = subscription
 
     def _register_effects(self, modules):
         """

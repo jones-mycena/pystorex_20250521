@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安全帽檢測狀態機模擬器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+    <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+            <h1 class="text-2xl font-bold text-gray-800 mb-6">安全帽檢測狀態機模擬器</h1>
+            
+            <!-- 時間序列按鈕組 -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-700 mb-3">時間序列事件</h2>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                        <h3 class="font-medium text-gray-700 mb-2">t0</h3>
+                        <textarea id="event-t0" class="w-full h-24 p-2 border border-gray-300 rounded text-sm" placeholder="輸入YOLO檢測結果...">[{"class": "none"}]</textarea>
+                        <button class="trigger-btn mt-2 w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded transition-all" data-time="t0">觸發事件</button>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                        <h3 class="font-medium text-gray-700 mb-2">t1</h3>
+                        <textarea id="event-t1" class="w-full h-24 p-2 border border-gray-300 rounded text-sm" placeholder="輸入YOLO檢測結果...">[{"class": "person", "confidence": 0.92, "bbox": [100, 150, 80, 160]}, {"class": "helmet", "confidence": 0.85, "bbox": [110, 120, 60, 50]}]</textarea>
+                        <button class="trigger-btn mt-2 w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded transition-all" data-time="t1">觸發事件</button>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                        <h3 class="font-medium text-gray-700 mb-2">t2</h3>
+                        <textarea id="event-t2" class="w-full h-24 p-2 border border-gray-300 rounded text-sm" placeholder="輸入YOLO檢測結果...">[{"class": "person", "confidence": 0.94, "bbox": [120, 150, 80, 160]}]</textarea>
+                        <button class="trigger-btn mt-2 w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded transition-all" data-time="t2">觸發事件</button>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                        <h3 class="font-medium text-gray-700 mb-2">t3</h3>
+                        <textarea id="event-t3" class="w-full h-24 p-2 border border-gray-300 rounded text-sm" placeholder="輸入YOLO檢測結果...">[{"class": "person", "confidence": 0.93, "bbox": [130, 150, 80, 160]}]</textarea>
+                        <button class="trigger-btn mt-2 w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded transition-all" data-time="t3">觸發事件</button>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                        <h3 class="font-medium text-gray-700 mb-2">t4</h3>
+                        <textarea id="event-t4" class="w-full h-24 p-2 border border-gray-300 rounded text-sm" placeholder="輸入YOLO檢測結果...">[{"class": "person", "confidence": 0.91, "bbox": [110, 150, 80, 160]}, {"class": "helmet", "confidence": 0.88, "bbox": [115, 120, 60, 50]}]</textarea>
+                        <button class="trigger-btn mt-2 w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded transition-all" data-time="t4">觸發事件</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 自動觸發控制 -->
+            <div class="mb-8 bg-gray-50 p-4 rounded-lg shadow-sm">
+                <h2 class="text-lg font-semibold text-gray-700 mb-3">自動觸發控制</h2>
+                <div class="flex flex-wrap items-center gap-4">
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">時間間隔 (毫秒)</label>
+                        <input type="number" id="interval-input" class="w-full p-2 border border-gray-300 rounded" value="1000" min="100">
+                    </div>
+                    <div class="flex items-center mt-4 md:mt-0">
+                        <button id="auto-trigger-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded transition-all">開始自動觸發</button>
+                        <button id="stop-trigger-btn" class="w-full ml-2 bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded transition-all hidden">停止自動觸發</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 狀態顯示 -->
+            <div class="bg-gray-50 p-4 rounded-lg shadow-sm">
+                <h2 class="text-lg font-semibold text-gray-700 mb-3">狀態歷史</h2>
+                <div id="state-history" class="space-y-2 max-h-96 overflow-y-auto">
+                    <!-- 狀態歷史將在這裡動態顯示 -->
+                </div>
+            </div>
+            
+            <!-- 當前狀態 -->
+            <div class="mt-6 p-4 rounded-lg shadow-sm bg-gray-50">
+                <h2 class="text-lg font-semibold text-gray-700 mb-2">當前狀態</h2>
+                <div id="current-state" class="p-3 bg-gray-200 rounded font-medium">無人</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 先載入狀態機邏輯，再載入主要應用程式邏輯 -->
+    <script src="state-machine.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

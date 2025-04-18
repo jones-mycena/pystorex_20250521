@@ -1,10 +1,10 @@
-from typing import TypeVar, Generic, Callable, NamedTuple
+from typing import TypeVar, Generic, Callable, NamedTuple, Optional
 
 P = TypeVar("P")
 
 class Action(Generic[P], NamedTuple):
     type: str
-    payload: P
+    payload: Optional[P] = None  # 將 payload 設為可選屬性
 
 
 def create_action(action_type: str, prepare_fn: Callable = None):
@@ -28,7 +28,7 @@ def create_action(action_type: str, prepare_fn: Callable = None):
             payload = dict(zip(range(len(args)), args))
             payload.update(kwargs)
             return Action(type=action_type, payload=payload)
-        return Action(type=action_type)
+        return Action(type=action_type, payload=None)  # 明確設置 payload 為 None
         
     action_creator.type = action_type
     
