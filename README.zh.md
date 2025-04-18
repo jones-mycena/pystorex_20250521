@@ -69,6 +69,30 @@ store.dispatch(decrement())  # Count: 1
 ```
 
 ---
+## Examples
+
+本專案附帶以下範例腳本，展示「拆分式 (modular)」與「一體化 (Monolithic)」的使用範例：
+
+**Counter 範例**
+
+- `examples/counter_example/main.py`：拆分式 Counter 範例入口程式。
+- `examples/counter_example/counter_example_monolithic.py`：一體化 Counter 範例。
+
+**Detection 範例**
+
+- `examples/detection_example/main.py`：拆分式偵測範例入口程式。
+- `examples/detection_example/detection_example_monolithic.py`：一體化偵測範例。
+
+可以在專案根目錄執行：
+
+```bash
+python examples/counter_example/main.py
+python examples/counter_example/counter_example_monolithic.py
+python examples/detection_example/main.py
+python examples/detection_example/detection_example_monolithic.py
+```
+
+---
 
 ## 核心概念
 
@@ -182,4 +206,7 @@ get_items = create_selector(
 ## 授權
 
 [MIT](LICENSE)
+
+
+
 

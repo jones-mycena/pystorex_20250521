@@ -66,6 +66,29 @@ store.dispatch(decrement())  # Count: 1
 
 ---
 
+## Examples
+
+This project includes the following example scripts to demonstrate both the modular and monolithic usage patterns:
+
+**Counter Example**
+
+- `examples/counter_example/main.py`: Entry point for the modular Counter example.
+- `examples/counter_example/counter_example_monolithic.py`: Monolithic Counter example.
+
+**Detection Example**
+
+- `examples/detection_example/main.py`: Entry point for the modular Detection example.
+- `examples/detection_example/detection_example_monolithic.py`: Monolithic Detection example.
+
+You can run them from the project root:
+
+```bash
+python examples/counter_example/main.py
+python examples/counter_example/counter_example_monolithic.py
+python examples/detection_example/main.py
+python examples/detection_example/detection_example_monolithic.py
+```
+
 ## Core Concepts
 
 ### Store
