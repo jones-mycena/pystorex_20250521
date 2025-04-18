@@ -1,2 +1,7 @@
-**/__pycache__/
-**/.pytest_cache/
+
+# Python build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
