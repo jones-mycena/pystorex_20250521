@@ -1,5 +1,3 @@
-# pystorex/entity_reducer.py
-
 from typing import Callable, Dict
 from .entity_adapter import create_entity_adapter, EntityAdapter
 from .reducers import create_reducer, on
