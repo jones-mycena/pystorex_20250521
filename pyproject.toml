@@ -1,3 +1,36 @@
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "pystorex"
+version = "0.1.8"
+description = "A Python state management library inspired by NgRx"
+readme = "README.md"
+# Removed invalid property 'readme-content-type'
+license = { text = "MIT" }
+authors = [
+  { name = "JonesHong", email = "latte831104@gmail.com" }
+]
+# PyPI 上的專案網址
+urls = { "homepage" = "https://github.com/JonesHong/pystorex.git" }
+requires-python = ">=3.7"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+dependencies = [
+  "reactivex>=1.6",
+  "pydantic>=1.10"
+]
+
+[project.optional-dependencies]
+dev = [
+  "twine",
+  "pytest",
+  "black"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
