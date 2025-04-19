@@ -5,7 +5,7 @@ from reactivex import Observable, operators as ops
 from reactivex import Subject
 from .reducers import Reducer, ReducerManager
 from .effects import EffectsManager
-from .actions import Action, create_action
+from .actions import Action, init_store, update_reducer
 
 
 S = TypeVar("S")
@@ -28,16 +28,13 @@ class Store(Generic[S]):
         self._raw_dispatch = self._dispatch_core
         self.dispatch = self._apply_middleware_chain()
 
-        # 当新的action分发时，应用reducer并更新状态
-        self._action_subject.pipe(
-            ops.scan(
-                lambda state, action: self._reducer_manager.reduce(state, action),
-                self._state,
-            )
-        ).subscribe(
-            on_next=self._update_state, on_error=lambda err: print(f"存储错误: {err}")
+        # 每次 dispatch 直接以 *最新* self._state 去 reduce
+        self._action_subject.subscribe(
+            on_next=lambda action: self._update_state(
+                self._reducer_manager.reduce(self._state, action)
+            ),
+            on_error=lambda err: print(f"存储错误: {err}")
         )
-
 
     def _update_state(self, new_state):
         """更新内部状态并通知订阅者"""
@@ -64,17 +61,26 @@ class Store(Generic[S]):
 
     def _wrap_obj_middleware(self, mw: Any, next_dispatch: Callable[[Action], Any]):
         def dispatch(action: Action):
-            mw.on_next(action)
+            # 1) 抓取 action 发进来前的旧 state
+            prev_state = self._state
+            # 2) 调用 middleware.on_next，传入 action 和旧 state
+            mw.on_next(action, prev_state)
+
             try:
+                # 3) 真正分发到 reducer / effects
                 result = next_dispatch(action)
-                mw.on_complete(result, action)
+
+                # 4) 拿到 action 分发完后的新 state
+                next_state = self._state
+                # 5) 调用 middleware.on_complete，传入新 state 和 action
+                mw.on_complete(next_state, action)
                 return result
+
             except Exception as err:
                 mw.on_error(err, action)
                 raise
 
         return dispatch
-
     def apply_middleware(self, *middlewares):
         """一次注册多个 middleware，然后重建 dispatch 链"""
         # 接受类和实例，如果是类则直接实例化
@@ -109,9 +115,10 @@ class Store(Generic[S]):
         """
         if selector is None:
             # 返回完整的状态元组 (old_state, new_state)
-            return self._state_subject
+            return self._state_subject.pipe(ops.ignore_elements())
 
         return self._state_subject.pipe(
+            # ops.skip(1),  # 跳过初始状态
             # 将元组 (old_state, new_state) 转换为 (selector(old_state), selector(new_state))
             ops.map(
                 lambda state_tuple: (selector(state_tuple[0]), selector(state_tuple[1]))
@@ -134,7 +141,7 @@ class Store(Generic[S]):
         self._reducer_manager.add_reducers(root_reducers)
         # 初始化状态
         self._state = self._reducer_manager.reduce(
-            None, create_action("@ngrx/store/init")
+            None, init_store()
         )
 
     def register_feature(self, feature_key: str, reducer: Reducer):
@@ -148,7 +155,7 @@ class Store(Generic[S]):
         self._reducer_manager.add_reducer(feature_key, reducer)
         # 更新状态以包含新特性
         self._state = self._reducer_manager.reduce(
-            self._state, create_action("@ngrx/store/update-reducers")
+            self._state, update_reducer()
         )
         return self
 
@@ -156,7 +163,7 @@ class Store(Generic[S]):
         self._reducer_manager.remove_reducer(feature_key)
         # 重新计算一次 state，去掉该 feature
         self._state = self._reducer_manager.reduce(
-            self._state, create_action("@ngrx/store/update-reducers")
+            self._state, update_reducer()
         )
         # 同时从 EffectsManager 卸载所有来自该 feature 的 effects
         self._effects_manager.teardown()  # or provide a more granular remove_effects
@@ -174,8 +181,9 @@ class Store(Generic[S]):
 
 def create_store() -> Store:
     """
-    用户在这里传入自己的 RootState 实例
-    例如： create_store(MyRootModel())
+    创建一个新的 Store 实例
+    Returns:
+        Store: 新创建的 Store 实例
     """
     return Store()
 

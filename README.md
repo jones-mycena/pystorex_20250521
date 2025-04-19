@@ -29,39 +29,112 @@ pip install pystorex
 ## Quick Start
 
 ```python
-from pystorex import create_store, create_reducer, on, create_effect, create_selector
+import time
+from typing import Optional
 from pydantic import BaseModel
+from reactivex import operators as ops
 
-# 1. Define your state models
+from pystorex.actions import create_action
+from pystorex import create_store, create_reducer, on, create_effect
+from pystorex.store_selectors import create_selector
+from pystorex.middleware import LoggerMiddleware
+
+# 1. 定義狀態模型
 class CounterState(BaseModel):
     count: int = 0
+    loading: bool = False
+    error: Optional[str] = None
+    last_updated: Optional[float] = None
 
-# 2. Create actions
-from pystorex.actions import create_action
+# 2. 定義 Actions
 increment = create_action("increment")
 decrement = create_action("decrement")
+reset = create_action("reset", lambda value: value)
+increment_by = create_action("incrementBy", lambda amount: amount)
 
-# 3. Create reducer
-def counter_handler(state: CounterState, action):
+load_count_request = create_action("loadCountRequest")
+load_count_success = create_action("loadCountSuccess", lambda value: value)
+load_count_failure = create_action("loadCountFailure", lambda error: error)
+
+# 3. 定義 Reducer
+def counter_handler(state: CounterState, action) -> CounterState:
+    new_state = state.copy(deep=True)
+    now = time.time()
+
     if action.type == increment.type:
-        state.count += 1
+        new_state.count += 1
+        new_state.last_updated = now
     elif action.type == decrement.type:
-        state.count -= 1
-    return state
+        new_state.count -= 1
+        new_state.last_updated = now
+    elif action.type == reset.type:
+        new_state.count = action.payload
+        new_state.last_updated = now
+    elif action.type == increment_by.type:
+        new_state.count += action.payload
+        new_state.last_updated = now
+    elif action.type == load_count_request.type:
+        new_state.loading = True
+        new_state.error = None
+    elif action.type == load_count_success.type:
+        new_state.loading = False
+        new_state.count = action.payload
+        new_state.last_updated = now
+    elif action.type == load_count_failure.type:
+        new_state.loading = False
+        new_state.error = action.payload
 
-counter_reducer = create_reducer(CounterState(), on(increment, counter_handler), on(decrement, counter_handler))
+    return new_state
 
-# 4. Create store
-store = create_store(CounterState())
+counter_reducer = create_reducer(
+    CounterState(),
+    on(increment, counter_handler),
+    on(decrement, counter_handler),
+    on(reset, counter_handler),
+    on(increment_by, counter_handler),
+    on(load_count_request, counter_handler),
+    on(load_count_success, counter_handler),
+    on(load_count_failure, counter_handler),
+)
+
+# 4. 定義 Effects
+class CounterEffects:
+    @create_effect
+    def load_count(self, action_stream):
+        return action_stream.pipe(
+            ops.filter(lambda action: action.type == load_count_request.type),
+            ops.do_action(lambda _: print("Effect: Loading counter...")),
+            ops.delay(1.0),
+            ops.map(lambda _: load_count_success(42))
+        )
+
+
+# 5. 建立 Store、註冊模組
+store = create_store()
+store.apply_middleware(LoggerMiddleware)
 store.register_root({"counter": counter_reducer})
+store.register_effects(CounterEffects)
 
-# 5. Subscribe to state changes
-store.select(lambda s: s.counter.count).subscribe(lambda new: print("Count:", new))
+# 6. 訂閱狀態與測試
+get_counter_state = lambda state: state["counter"]
+get_count = create_selector(
+    get_counter_state,
+    result_fn=lambda counter: counter.count or 0
+)
+store.select(get_count).subscribe(
+    lambda c: print(f"Count: {c[1]}")
+)
 
-# 6. Dispatch actions
-store.dispatch(increment())  # Count: 1
-store.dispatch(increment())  # Count: 2
-store.dispatch(decrement())  # Count: 1
+# 7. 執行操作示例
+if __name__ == "__main__":
+    store.dispatch(increment())
+    store.dispatch(increment_by(5))
+    store.dispatch(decrement())
+    store.dispatch(reset(10))
+    store.dispatch(load_count_request())
+    # 給 Effects 一些時間
+    time.sleep(2)
+
 ```
 
 ---

@@ -33,3 +33,25 @@ def create_action(action_type: str, prepare_fn: Callable = None):
     action_creator.type = action_type
     
     return action_creator
+
+
+init_store = create_action("[Root] Init Store")
+update_reducer = create_action("[Root] Update Reducer")
+
+
+from typing import Any, Dict, List
+from .actions import create_action
+
+# payload 都是 dict 或 list[dict]
+add_one      = create_action("[Entity] AddOne",      lambda e: e)
+add_many     = create_action("[Entity] AddMany",     lambda es: es)
+set_one      = create_action("[Entity] SetOne",      lambda e: e)
+set_many     = create_action("[Entity] SetMany",     lambda es: es)
+set_all      = create_action("[Entity] SetAll",      lambda es: es)
+remove_one   = create_action("[Entity] RemoveOne",   lambda id: id)
+remove_many  = create_action("[Entity] RemoveMany",  lambda ids: ids)
+remove_all   = create_action("[Entity] RemoveAll")   # 無 payload
+update_one   = create_action("[Entity] UpdateOne",   lambda e: e)
+update_many  = create_action("[Entity] UpdateMany",  lambda es: es)
+upsert_one   = create_action("[Entity] UpsertOne",   lambda e: e)
+upsert_many  = create_action("[Entity] UpsertMany",  lambda es: es)
