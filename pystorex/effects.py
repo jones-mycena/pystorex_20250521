@@ -1,55 +1,93 @@
-from typing import Any, Callable, Dict
+"""
+基於 PyStoreX 的 Effects 定義模組。
+
+此模組提供創建和管理 Effects 的功能。Effects 用於處理副作用，
+如 API 請求、本地存儲交互等非同步操作。
+"""
+
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast, overload
 from reactivex import operators as ops
 from reactivex import Observable
+from reactivex.disposable import Disposable
 from .actions import Action
+from .types import (
+    T, EffectFunction, EffectCreator, EffectDecorator, 
+    Effect as EffectType, EffectMethod, Store
+)
 import inspect
 import functools
 
 
-class Effect:
+class Effect(EffectType[T]):
     """
     表示一個副作用處理函數的封裝類別。
+    
+    泛型參數:
+        T: Effect 的輸出類型
+    
+    屬性:
+        source: Observable，表示副作用的資料流
     """
 
-    def __init__(self, source: Observable):
+    def __init__(self, source: Observable[T]) -> None:
         """
         初始化 Effect 實例。
 
-        :param source: 一個 Observable，表示副作用的資料流。
+        Args:
+            source: 一個 Observable，表示副作用的資料流。
         """
         self.source = source
 
+
+@overload
+def create_effect(effect_fn: EffectFunction) -> Callable[[Observable[Action[Any]]], Effect[Any]]:
+    """裝飾器版本，帶預設 dispatch=True"""
+    ...
+
+@overload
+def create_effect(*, dispatch: bool = True) -> EffectDecorator:
+    """參數化裝飾器版本"""
+    ...
 
 def create_effect(effect_fn=None, *, dispatch: bool = True):
     """
     創建一個副作用裝飾器，用於標記函數為 Effect。
 
-    用法：
+    用法:
       @create_effect
-      def foo(action$): ...
+      def foo(action$):
+          return action$.pipe(...)
     或
       @create_effect(dispatch=False)
-      def bar(action$): ...
+      def bar(action$):
+          return action$.pipe(...)
 
-    :param effect_fn: 被裝飾的函數，默認為 None。
-    :param dispatch: 是否自動 dispatch Action，默認為 True。
-    :return: 包裝後的函數或裝飾器。
+    Args:
+        effect_fn: 被裝飾的函數，默認為 None。
+        dispatch: 是否自動 dispatch Action，默認為 True。
+    
+    Returns:
+        包裝後的函數或裝飾器。
+        
+    注意:
+        被裝飾的函數應該接收一個 Observable 並返回一個 Observable。
+        如果 dispatch=True，返回的 Observable 發射的值應該是 Action。
     """
     # 如果沒有直接給函數，就返回一個 decorator
     if effect_fn is None:
-        def decorator(fn):
+        def decorator(fn: EffectFunction) -> Callable[[Observable[Action[Any]]], Effect[Any]]:
             return create_effect(fn, dispatch=dispatch)
         return decorator
 
     # 判斷是否為實例方法
     is_instance_method = (
-        inspect.isfunction(effect_fn)
-        and effect_fn.__code__.co_varnames
+        inspect.isfunction(effect_fn) 
+        and effect_fn.__code__.co_varnames 
         and effect_fn.__code__.co_varnames[0] == "self"
     )
 
     @functools.wraps(effect_fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Effect[Any]:
         """
         包裝函數，處理 action_stream 並返回 Effect 實例。
         """
@@ -64,9 +102,9 @@ def create_effect(effect_fn=None, *, dispatch: bool = True):
         return Effect(source)
 
     # 標記這個 wrapper 是一個 Effect，並記錄 dispatch 標誌
-    wrapper.is_effect = True
-    wrapper.dispatch = dispatch
-    wrapper.is_instance_method = is_instance_method
+    wrapper.is_effect = True  # type: ignore
+    wrapper.dispatch = dispatch  # type: ignore
+    wrapper.is_instance_method = is_instance_method  # type: ignore
     return wrapper
 
 
@@ -75,23 +113,29 @@ class EffectsManager:
     管理所有的 Effect 模組，負責註冊、取消和清理 Effect。
     """
 
-    def __init__(self, store):
+    def __init__(self, store: Store[Any]) -> None:
         """
         初始化 EffectsManager。
 
-        :param store: 存儲對象，用於管理 Action 和 State。
+        Args:
+            store: 存儲對象，用於管理 Action 和 State。
         """
         self.store = store
-        self.subscriptions = []  # 儲存所有的訂閱
-        self._effects_modules = []  # 儲存所有的 Effect 模組
-        self._subs_by_module: Dict[Any, list] = {}  # 按模組分組的訂閱
-        self._subs_by_effect = {}  # 按 (模組, Effect 名稱) 分組的訂閱
+        self.subscriptions: List[Disposable] = []  # 儲存所有的訂閱
+        self._effects_modules: List[Any] = []  # 儲存所有的 Effect 模組
+        self._subs_by_module: Dict[Any, List[Disposable]] = {}  # 按模組分組的訂閱
+        self._subs_by_effect: Dict[Tuple[Any, str], Disposable] = {}  # 按 (模組, Effect 名稱) 分組的訂閱
 
-    def add_effects(self, *effects_items):
+    def add_effects(self, *effects_items: Any) -> None:
         """
         添加效果模組。
 
-        :param effects_items: 一個或多個 Effect 模組或配置。
+        Args:
+            *effects_items: 一個或多個 Effect 模組或配置。
+            
+        注意:
+            Effect 模組可以是類、類的實例或配置字典。
+            配置字典應包含 "class" 鍵和可選的 "params" 鍵。
         """
         new_modules = []
         for item in effects_items:
@@ -105,12 +149,15 @@ class EffectsManager:
             # 註冊新的 Effect 模組
             self._register_effects(new_modules)
 
-    def _process_effects_item(self, item):
+    def _process_effects_item(self, item: Any) -> List[Any]:
         """
         處理單個 effects 項，返回實例列表。
 
-        :param item: Effect 項，可以是類別、實例、字典或列表。
-        :return: 包含所有處理後實例的列表。
+        Args:
+            item: Effect 項，可以是類別、實例、字典或列表。
+            
+        Returns:
+            包含所有處理後實例的列表。
         """
         instances = []
         # 如果是列表或元組，遞歸處理每個子項
@@ -136,11 +183,12 @@ class EffectsManager:
             instances.append(item)
         return instances
 
-    def _register_effects(self, modules):
+    def _register_effects(self, modules: List[Any]) -> None:
         """
         註冊指定模組中的 Effect。
 
-        :param modules: 包含需要註冊的 Effect 模組的列表。
+        Args:
+            modules: 包含需要註冊的 Effect 模組的列表。
         """
         action_stream = self.store._action_subject  # Action 的資料流
         for module in modules:
@@ -170,29 +218,35 @@ class EffectsManager:
                     except Exception as e:
                         print(f"註冊效果 {name} 時出錯: {e}")
 
-    def _handle_effect_error(self, module, name):
+    def _handle_effect_error(self, module: Any, name: str) -> Callable[[Exception, Observable], Observable]:
         """
         處理 Effect 執行過程中的錯誤。
 
-        :param module: 發生錯誤的模組。
-        :param name: 發生錯誤的 Effect 名稱。
-        :return: 錯誤捕獲函數。
+        Args:
+            module: 發生錯誤的模組。
+            name: 發生錯誤的 Effect 名稱。
+            
+        Returns:
+            錯誤捕獲函數。
         """
-        def catcher(err, source):
+        def catcher(err: Exception, source: Observable) -> Observable:
             print(f"[Error][Effect {module.__class__.__name__}.{name}]:", err)
             # 可以在這裡插入重試、上報或其他處理邏輯
             return source  # 返回原始資料流以繼續處理
         return catcher
 
-    def _dispatch_if_action(self, module, effect_fn):
+    def _dispatch_if_action(self, module: Any, effect_fn: Callable) -> Callable[[Any], None]:
         """
         如果輸出是 Action，則自動 dispatch。
 
-        :param module: Effect 所屬的模組。
-        :param effect_fn: Effect 函數。
-        :return: 處理輸出的函數。
+        Args:
+            module: Effect 所屬的模組。
+            effect_fn: Effect 函數。
+            
+        Returns:
+            處理輸出的函數。
         """
-        def dispatcher(item):
+        def dispatcher(item: Any) -> None:
             if not getattr(effect_fn, "dispatch", True):  # 檢查 dispatch 屬性
                 return
             if isinstance(item, Action):  # 檢查是否為 Action
@@ -204,11 +258,12 @@ class EffectsManager:
                 )
         return dispatcher
 
-    def remove_effects(self, *modules):
+    def remove_effects(self, *modules: Any) -> None:
         """
         卸載指定模組的所有訂閱，不影響其他模組。
 
-        :param modules: 需要卸載的模組列表。
+        Args:
+            modules: 需要卸載的模組列表。
         """
         for module in modules:
             subs = self._subs_by_module.get(module, [])
@@ -220,12 +275,13 @@ class EffectsManager:
             if module in self._effects_modules:
                 self._effects_modules.remove(module)
 
-    def cancel_effect(self, module, effect_name: str):
+    def cancel_effect(self, module: Any, effect_name: str) -> None:
         """
         取消指定模組中的某個 Effect。
 
-        :param module: 模組實例。
-        :param effect_name: Effect 的名稱。
+        Args:
+            module: 模組實例。
+            effect_name: Effect 的名稱。
         """
         key = (module, effect_name)
         sub = self._subs_by_effect.pop(key, None)
@@ -236,7 +292,7 @@ class EffectsManager:
                 s for s in self._subs_by_module[module] if s is not sub
             ]
 
-    def _register_all_effects(self):
+    def _register_all_effects(self) -> None:
         """
         重新註冊所有模組中的 Effect。
         """
@@ -245,7 +301,7 @@ class EffectsManager:
         self.subscriptions.clear()
         self._register_effects(self._effects_modules)  # 重新註冊
 
-    def teardown(self):
+    def teardown(self) -> None:
         """
         清理所有訂閱和模組引用。
         """

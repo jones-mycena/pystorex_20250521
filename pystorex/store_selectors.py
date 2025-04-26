@@ -1,8 +1,29 @@
+"""
+基於 PyStoreX 的選擇器定義模組。
+
+此模組提供創建具有記憶功能的選擇器，可以從 Store 狀態中高效地選擇資料。
+選擇器會記住上次的計算結果，只有當輸入變化時才重新計算，避免不必要的性能損耗。
+"""
+
 import time
 import copy
-from typing import Callable, Any
+from typing import Callable, Any, List, Optional, Tuple, cast, overload
+from .types import (
+    Input, Output, R, StateSelector, ResultSelector, 
+    MemoizedSelector, SelectorCreator1, SelectorCreatorN
+)
 
-def create_selector(*selectors: Callable[[Any], Any], result_fn: Callable = None, deep: bool = False, ttl: float = None):
+@overload
+def create_selector(selector: StateSelector[Input, Output], *, deep: bool = False, ttl: Optional[float] = None) -> StateSelector[Input, Output]:
+    """單一選擇器重載"""
+    ...
+
+@overload
+def create_selector(*selectors: StateSelector[Input, Any], result_fn: ResultSelector[R], deep: bool = False, ttl: Optional[float] = None) -> StateSelector[Input, R]:
+    """組合多個選擇器重載"""
+    ...
+
+def create_selector(*selectors: Callable[[Any], Any], result_fn: Optional[Callable[..., Any]] = None, deep: bool = False, ttl: Optional[float] = None) -> MemoizedSelector:
     """
     創建一個複合選擇器，支援 shallow/deep 比較與 TTL 快取控制
 
@@ -14,6 +35,40 @@ def create_selector(*selectors: Callable[[Any], Any], result_fn: Callable = None
 
     Returns:
         經過快取優化的 selector 函數
+        
+    範例:
+        ```python
+        # 簡單選擇器，從狀態中選擇計數器值
+        get_counter = lambda state: state["counter"]
+        
+        # 衍生選擇器，計算計數器的平方
+        get_counter_squared = create_selector(
+            get_counter,
+            result_fn=lambda counter: counter ** 2
+        )
+        
+        # 組合多個選擇器
+        get_user = lambda state: state["user"]
+        get_items = lambda state: state["items"]
+        
+        # 計算用戶權限內的項目
+        get_allowed_items = create_selector(
+            get_user,
+            get_items,
+            result_fn=lambda user, items: [
+                item for item in items 
+                if user["role"] in item["allowed_roles"]
+            ]
+        )
+        
+        # 使用深度比較和快取超時
+        expensive_selector = create_selector(
+            get_complex_data,
+            result_fn=lambda data: perform_expensive_calculation(data),
+            deep=True,  # 對象內容變化時重新計算
+            ttl=300  # 最多 5 分鐘快取
+        )
+        ```
     """
     # 如果沒有 result_fn 且只有一個選擇器，直接返回該選擇器
     if not result_fn and len(selectors) == 1:
@@ -24,11 +79,11 @@ def create_selector(*selectors: Callable[[Any], Any], result_fn: Callable = None
         result_fn = lambda *args: args
 
     # 初始化快取相關變數
-    last_inputs = None  # 上一次的輸入值
-    last_output = None  # 上一次的輸出結果
-    last_time = None    # 上一次計算的時間
+    last_inputs: Any = None  # 上一次的輸入值
+    last_output: Any = None  # 上一次的輸出結果
+    last_time: Optional[float] = None    # 上一次計算的時間
 
-    def selector(state):
+    def selector(state: Any) -> Any:
         """
         經過快取優化的選擇器函數
 

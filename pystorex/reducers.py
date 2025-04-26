@@ -1,10 +1,22 @@
-from typing import Dict, Any, Callable, TypeVar
+"""
+基於 PyStoreX 的 Reducer 定義模組。
+
+此模組提供建立和管理 Reducer 的功能。Reducers 是純函數，
+負責根據接收到的 Action 將當前狀態轉換為新狀態。
+"""
+
+from typing import Dict, Any, Callable, Union, Tuple, Optional, overload, cast
 from .actions import Action
+from .types import (
+    S, P, ActionHandler, HandlerMap, ReducerFunction, 
+    Reducer as ReducerProtocol
+)
 
-S = TypeVar("S")
-Reducer = Callable[[S, Action[Any]], S]
+# 使用類型模組中定義的 ReducerFunction 類型
+Reducer = ReducerFunction
 
-def create_reducer(initial_state: S, *handlers) -> Reducer[S]:
+
+def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler], Dict[str, ActionHandler]]) -> ReducerFunction[S]:
     """
     創建一個 reducer 函式，用於處理狀態變更。
 
@@ -14,8 +26,21 @@ def create_reducer(initial_state: S, *handlers) -> Reducer[S]:
 
     Returns:
         一個 reducer 函式，根據 action 的類型執行對應的處理邏輯。
+        
+    範例:
+        >>> # 創建一個計數器 reducer
+        >>> increment = create_action("[Counter] Increment")
+        >>> decrement = create_action("[Counter] Decrement")
+        >>> reset = create_action("[Counter] Reset")
+        >>> 
+        >>> counter_reducer = create_reducer(
+        ...     0,  # 初始狀態
+        ...     on(increment, lambda state, action: state + 1),
+        ...     on(decrement, lambda state, action: state - 1),
+        ...     on(reset, lambda state, action: 0)
+        ... )
     """
-    action_handlers = {}  # 儲存 action 類型與處理函式的對應關係
+    action_handlers: HandlerMap = {}  # 儲存 action 類型與處理函式的對應關係
     
     for handler in handlers:
         if isinstance(handler, tuple) and len(handler) == 2:
@@ -24,9 +49,9 @@ def create_reducer(initial_state: S, *handlers) -> Reducer[S]:
             action_handlers[action_type] = handler_fn
         else:
             # 如果 handler 是字典，則直接更新到 action_handlers
-            action_handlers.update(handler)
+            action_handlers.update(cast(Dict[str, ActionHandler], handler))
     
-    def reducer(state: S = initial_state, action: Action = None) -> S:
+    def reducer(state: S = initial_state, action: Optional[Action[Any]] = None) -> S:
         """
         Reducer 函式，根據 action 處理狀態變更。
 
@@ -46,12 +71,20 @@ def create_reducer(initial_state: S, *handlers) -> Reducer[S]:
         return state  # 如果沒有對應處理函式，返回原狀態
     
     # 設置 reducer 的初始狀態和處理器映射
-    reducer.initial_state = initial_state
-    reducer.handlers = action_handlers
+    reducer.initial_state = initial_state  # type: ignore
+    reducer.handlers = action_handlers  # type: ignore
     
     return reducer
 
-def on(action_creator_or_type, handler):
+
+@overload
+def on(action_creator: Callable[..., Action[P]], handler: Callable[[S, Action[P]], S]) -> Dict[str, ActionHandler]: ...
+
+@overload
+def on(action_type: str, handler: Callable[[S, Action[Any]], S]) -> Dict[str, ActionHandler]: ...
+
+def on(action_creator_or_type: Union[Callable[..., Action[Any]], str], 
+       handler: Callable[[S, Action[Any]], S]) -> Dict[str, ActionHandler]:
     """
     創建一個 action 類型與處理函式的映射。
 
@@ -61,6 +94,14 @@ def on(action_creator_or_type, handler):
 
     Returns:
         一個包含 {action_type: handler} 的字典。
+        
+    範例:
+        >>> # 使用 action creator
+        >>> increment = create_action("[Counter] Increment")
+        >>> on(increment, lambda state, action: state + 1)
+        >>> 
+        >>> # 使用 action type 字串
+        >>> on("[Counter] Increment", lambda state, action: state + 1)
     """
     if callable(action_creator_or_type) and hasattr(action_creator_or_type, 'type'):
         # 如果是 action 創建器函式，則提取其類型
@@ -71,6 +112,7 @@ def on(action_creator_or_type, handler):
     
     return {action_type: handler}  # 返回 action 類型與處理函式的映射
 
+
 class ReducerManager:
     """
     管理應用中的所有 reducers，類似於 NgRx 的 MetaReducer。
@@ -79,14 +121,14 @@ class ReducerManager:
         _feature_reducers: 儲存每個功能模組的 reducer。
         _state: 儲存最新的整個 root state。
     """
-    def __init__(self):
+    def __init__(self) -> None:
         """
         初始化 ReducerManager，創建空的 reducers 和狀態儲存。
         """
-        self._feature_reducers = {}  # 儲存功能模組的 reducers
-        self._state = {}  # 儲存最新的 root state
+        self._feature_reducers: Dict[str, ReducerFunction] = {}  # 儲存功能模組的 reducers
+        self._state: Dict[str, Any] = {}  # 儲存最新的 root state
 
-    def add_reducer(self, feature_key: str, reducer: Reducer):
+    def add_reducer(self, feature_key: str, reducer: ReducerFunction) -> None:
         """
         添加一個 reducer 到指定的功能模組。
 
@@ -95,9 +137,9 @@ class ReducerManager:
             reducer: 要添加的 reducer 函式。
         """
         self._feature_reducers[feature_key] = reducer
-        self._state[feature_key] = reducer.initial_state  # 初始化該功能模組的狀態
+        self._state[feature_key] = reducer.initial_state  # type: ignore  # 初始化該功能模組的狀態
 
-    def add_reducers(self, reducers: Dict[str, Reducer]):
+    def add_reducers(self, reducers: Dict[str, ReducerFunction]) -> None:
         """
         批量添加 reducers。
 
@@ -107,7 +149,7 @@ class ReducerManager:
         for key, r in reducers.items():
             self.add_reducer(key, r)
 
-    def remove_reducer(self, feature_key: str):
+    def remove_reducer(self, feature_key: str) -> None:
         """
         移除指定功能模組的 reducer。
 
@@ -118,7 +160,7 @@ class ReducerManager:
             del self._feature_reducers[feature_key]
             del self._state[feature_key]
 
-    def get_reducers(self) -> Dict[str, Reducer]:
+    def get_reducers(self) -> Dict[str, ReducerFunction]:
         """
         獲取當前所有的 reducers。
 
@@ -127,7 +169,7 @@ class ReducerManager:
         """
         return self._feature_reducers.copy()
 
-    def reduce(self, state: Dict[str, Any] = None, action: Action = None) -> Dict[str, Any]:
+    def reduce(self, state: Optional[Dict[str, Any]] = None, action: Optional[Action[Any]] = None) -> Dict[str, Any]:
         """
         使用所有註冊的 reducers 處理 action 並返回新狀態。
 
@@ -145,7 +187,7 @@ class ReducerManager:
 
         for feature_key, reducer in self._feature_reducers.items():
             # 獲取當前功能模組的狀態，若不存在則使用初始狀態
-            prev_substate = state.get(feature_key, reducer.initial_state)
+            prev_substate = state.get(feature_key, reducer.initial_state)  # type: ignore
             next_substate = reducer(prev_substate, action)  # 使用 reducer 處理 action
 
             if next_substate is not prev_substate:

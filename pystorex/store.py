@@ -1,23 +1,66 @@
+"""
+基於 PyStoreX 的 Store 定義模組。
+
+此模組提供狀態容器的核心實現，包括狀態管理、動作分發、
+中介軟體支持以及與 Reducer 和 Effects 的交互機制。
+"""
+
 import inspect
-from typing import Dict, Callable, Any, Generic, Type, TypeVar
-from pydantic import BaseModel
+from typing import Dict, Callable, Any, Generic, Optional, List, Union, cast
 from reactivex import Observable, operators as ops
 from reactivex import Subject
-from .reducers import Reducer, ReducerManager
+from .reducers import ReducerFunction, ReducerManager
 from .effects import EffectsManager
 from .actions import Action, init_store, update_reducer
-
-
-S = TypeVar("S")
-
+from .types import (
+    S, T, DispatchFunction, StateSelector, NextDispatch, 
+    Middleware as MiddlewareProtocol, MiddlewareFunction
+)
 
 class Store(Generic[S]):
     """
     狀態容器，管理應用狀態並通知訂閱者狀態變更。
     支援 reducer 和 middleware 的動態註冊與狀態選擇。
+    
+    泛型參數:
+        S: 狀態類型，通常是字典或嵌套結構
+        
+    屬性:
+        state: 當前狀態的快照，唯讀屬性
+        
+    範例:
+        ```python
+        # 創建一個簡單的計數器 store
+        from pystorex import create_store, create_reducer, create_action, on
+        
+        # 定義 actions
+        increment = create_action("[Counter] Increment")
+        decrement = create_action("[Counter] Decrement")
+        
+        # 定義初始狀態和 reducer
+        counter_reducer = create_reducer(
+            0,  # 初始狀態
+            on(increment, lambda state, action: state + 1),
+            on(decrement, lambda state, action: state - 1)
+        )
+        
+        # 創建並配置 store
+        store = create_store()
+        store.register_root({"counter": counter_reducer})
+        
+        # 使用 store
+        print(store.state)  # {"counter": 0}
+        store.dispatch(increment())
+        print(store.state)  # {"counter": 1}
+        
+        # 監聽狀態變化
+        store.select(lambda state: state["counter"]).subscribe(
+            on_next=lambda value_tuple: print(f"計數器從 {value_tuple[0]} 變為 {value_tuple[1]}")
+        )
+        ```
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """
         初始化一個空的 Store 實例。
 
@@ -28,13 +71,13 @@ class Store(Generic[S]):
         # 初始化 effects 管理器，並將當前 Store 傳入
         self._effects_manager = EffectsManager(self)
         # 初始化內部狀態為空字典
-        self._state = {}
+        self._state: Dict[str, Any] = {}
         # 初始化動作流（Subject）
-        self._action_subject = Subject()
+        self._action_subject: Subject = Subject()
         # 初始化狀態流（Subject）
-        self._state_subject = Subject()
+        self._state_subject: Subject = Subject()
         # 初始化中介軟體列表
-        self._middleware = []
+        self._middleware: List[Any] = []
         # 設定原始的 dispatch 方法
         self._raw_dispatch = self._dispatch_core
         # 構建中介軟體鏈後的 dispatch 方法
@@ -48,7 +91,7 @@ class Store(Generic[S]):
             on_error=lambda err: print(f"存儲錯誤: {err}")  # 捕捉錯誤並打印
         )
 
-    def _update_state(self, new_state):
+    def _update_state(self, new_state: Dict[str, Any]) -> None:
         """
         更新內部狀態並通知訂閱者。
 
@@ -62,7 +105,7 @@ class Store(Generic[S]):
         # 通知訂閱者，傳遞舊狀態與新狀態的元組
         self._state_subject.on_next((old_state, new_state))
 
-    def _dispatch_core(self, action):
+    def _dispatch_core(self, action: Action[Any]) -> Action[Any]:
         """
         核心的 dispatch 方法，將動作傳遞給動作流。
 
@@ -75,7 +118,7 @@ class Store(Generic[S]):
         self._action_subject.on_next(action)
         return action
 
-    def _apply_middleware_chain(self):
+    def _apply_middleware_chain(self) -> DispatchFunction:
         """
         構建中介軟體鏈，將中介軟體按順序包裹在 dispatch 方法外層。
 
@@ -83,7 +126,7 @@ class Store(Generic[S]):
             包裹後的 dispatch 方法。
         """
         # 從最後一個中介軟體開始包裹
-        dispatch = self._raw_dispatch
+        dispatch: DispatchFunction = self._raw_dispatch
         for mw in reversed(self._middleware):
             # 判斷中介軟體是函數還是物件
             if hasattr(mw, "on_next"):
@@ -94,7 +137,7 @@ class Store(Generic[S]):
                 dispatch = mw(self)(dispatch)
         return dispatch
 
-    def _wrap_obj_middleware(self, mw: Any, next_dispatch: Callable[[Action], Any]):
+    def _wrap_obj_middleware(self, mw: MiddlewareProtocol, next_dispatch: DispatchFunction) -> DispatchFunction:
         """
         包裹物件型中介軟體。
 
@@ -105,7 +148,7 @@ class Store(Generic[S]):
         Returns:
             包裹後的 dispatch 方法。
         """
-        def dispatch(action: Action):
+        def dispatch(action: Any) -> Any:
             # 抓取 action 傳入前的舊狀態
             prev_state = self._state
             # 調用中介軟體的 on_next 方法
@@ -128,12 +171,21 @@ class Store(Generic[S]):
 
         return dispatch
 
-    def apply_middleware(self, *middlewares):
+    def apply_middleware(self, *middlewares: Union[type, MiddlewareProtocol]) -> None:
         """
         一次註冊多個中介軟體，並重建 dispatch 鏈。
 
         Args:
             *middlewares: 要註冊的中介軟體，可以是類或實例。
+            
+        範例:
+            ```python
+            # 註冊日誌和 Thunk 中介軟體
+            from pystorex.middleware import LoggerMiddleware, ThunkMiddleware
+            
+            store = create_store()
+            store.apply_middleware(LoggerMiddleware(), ThunkMiddleware())
+            ```
         """
         # 接受類和實例，如果是類則直接實例化
         for m in middlewares:
@@ -142,33 +194,46 @@ class Store(Generic[S]):
         # 重建 dispatch 鏈
         self.dispatch = self._apply_middleware_chain()
 
-    def dispatch(self, action: Action):
+    def dispatch(self, action: Union[Action[Any], Callable]) -> Any:
         """
         分發一個動作，觸發狀態更新。
 
         Args:
-            action: 要分發的 Action 物件。
+            action: 要分發的 Action 物件或 Thunk 函數。
 
         Returns:
-            傳入的 Action。
+            根據中介軟體處理不同而異，通常返回原始 Action 或中介軟體的處理結果。
+            
+        注意:
+            此方法會在初始化時被重新賦值為包含所有中介軟體的分發鏈。
         """
-        # 分發動作給訂閱者
-        self._action_subject.on_next(action)
+        # 此內容不會執行，僅用於類型提示
         return action
 
-    def select(self, selector: Callable[[S], Any] = None) -> Observable:
+    def select(self, selector: Optional[StateSelector[S, T]] = None) -> Observable:
         """
         選擇狀態的一部分進行觀察。
 
         Args:
             selector: 一個函數，接收整個狀態並返回希望觀察的部分。
+                      如果為 None，則返回完整的狀態。
 
         Returns:
             一個可觀察對象，發送選定的狀態部分。
+            發射的每個項目是 (old_value, new_value) 的元組，
+            表示狀態變化前後的值。
+            
+        範例:
+            ```python
+            # 監聽計數器狀態
+            store.select(lambda state: state["counter"]).subscribe(
+                on_next=lambda value_tuple: print(f"計數器從 {value_tuple[0]} 變為 {value_tuple[1]}")
+            )
+            ```
         """
         if selector is None:
             # 返回完整的狀態元組 (old_state, new_state)
-            return self._state_subject.pipe(ops.ignore_elements())
+            return self._state_subject
 
         return self._state_subject.pipe(
             # 將元組 (old_state, new_state) 轉換為 (selector(old_state), selector(new_state))
@@ -186,15 +251,28 @@ class Store(Generic[S]):
 
         Returns:
             當前狀態。
+            
+        注意:
+            這是一個快照，不會隨狀態變化而更新。
+            要監聽狀態變化，請使用 select() 方法。
         """
-        return self._state
+        return cast(S, self._state)
 
-    def register_root(self, root_reducers: Dict[str, Reducer]):
+    def register_root(self, root_reducers: Dict[str, ReducerFunction]) -> None:
         """
         註冊應用的根級 reducers。
 
         Args:
             root_reducers: 特性鍵名到 reducer 的映射字典。
+            
+        範例:
+            ```python
+            # 註冊根級 reducers
+            store.register_root({
+                "counter": counter_reducer,
+                "todos": todos_reducer
+            })
+            ```
         """
         self._reducer_manager.add_reducers(root_reducers)
         # 初始化狀態
@@ -202,13 +280,24 @@ class Store(Generic[S]):
             None, init_store()
         )
 
-    def register_feature(self, feature_key: str, reducer: Reducer):
+    def register_feature(self, feature_key: str, reducer: ReducerFunction) -> 'Store[S]':
         """
         註冊一個特性模組的 reducer。
+        
+        當應用擴展或動態載入新功能時使用。
 
         Args:
             feature_key: 特性模組的鍵名。
             reducer: 特性模組的 reducer。
+            
+        Returns:
+            自身，以支持鏈式調用。
+            
+        範例:
+            ```python
+            # 動態添加設置功能
+            store.register_feature("settings", settings_reducer)
+            ```
         """
         self._reducer_manager.add_reducer(feature_key, reducer)
         # 更新狀態以包含新特性
@@ -217,12 +306,21 @@ class Store(Generic[S]):
         )
         return self
 
-    def unregister_feature(self, feature_key: str):
+    def unregister_feature(self, feature_key: str) -> 'Store[S]':
         """
         卸載一個特性模組，包括其 reducer 和 effects。
 
         Args:
             feature_key: 特性模組的鍵名。
+            
+        Returns:
+            自身，以支持鏈式調用。
+            
+        範例:
+            ```python
+            # 卸載不再需要的功能
+            store.unregister_feature("temporary_feature")
+            ```
         """
         self._reducer_manager.remove_reducer(feature_key)
         # 重新計算一次狀態，去掉該特性
@@ -233,22 +331,34 @@ class Store(Generic[S]):
         self._effects_manager.teardown()
         return self
 
-    def register_effects(self, *effects_modules):
+    def register_effects(self, *effects_modules: Any) -> None:
         """
         註冊一個或多個效果模組。
 
         Args:
             *effects_modules: 包含 effects 的模組或對象。
+            
+        範例:
+            ```python
+            # 註冊處理 API 請求的 effects
+            store.register_effects(TodoEffects())
+            ```
         """
         self._effects_manager.add_effects(*effects_modules)
 
 
-def create_store() -> Store:
+def create_store() -> Store[Dict[str, Any]]:
     """
     創建一個新的 Store 實例。
 
     Returns:
-        Store: 新創建的 Store 實例。
+        一個新的 Store 實例，狀態類型為 Dict[str, Any]。
+        
+    範例:
+        ```python
+        # 創建基本 store
+        store = create_store()
+        ```
     """
     return Store()
 
@@ -256,10 +366,12 @@ def create_store() -> Store:
 class StoreModule:
     """
     用於配置 Store 的工具類，類似於 NgRx 的 StoreModule。
+    
+    提供一種靜態方法的方式來管理 Store 實例和其 Reducers。
     """
 
     @staticmethod
-    def register_root(reducers: Dict[str, Reducer], store: Store = None):
+    def register_root(reducers: Dict[str, ReducerFunction], store: Optional[Store[S]] = None) -> Store[S]:
         """
         註冊應用的根級 reducers。
 
@@ -269,6 +381,15 @@ class StoreModule:
 
         Returns:
             配置好的 Store 實例。
+            
+        範例:
+            ```python
+            # 使用 StoreModule 創建並配置 store
+            store = StoreModule.register_root({
+                "counter": counter_reducer,
+                "todos": todos_reducer
+            })
+            ```
         """
         if store is None:
             store = create_store()
@@ -277,7 +398,7 @@ class StoreModule:
         return store
 
     @staticmethod
-    def register_feature(feature_key: str, reducer: Reducer, store: Store):
+    def register_feature(feature_key: str, reducer: ReducerFunction, store: Store[S]) -> Store[S]:
         """
         註冊一個特性模組的 reducer。
 
@@ -288,12 +409,18 @@ class StoreModule:
 
         Returns:
             更新後的 Store 實例。
+            
+        範例:
+            ```python
+            # 使用 StoreModule 添加新功能
+            store = StoreModule.register_feature("settings", settings_reducer, store)
+            ```
         """
         store.register_feature(feature_key, reducer)
         return store
 
     @staticmethod
-    def unregister_feature(feature_key: str, store: Store):
+    def unregister_feature(feature_key: str, store: Store[S]) -> Store[S]:
         """
         卸載一個特性模組，包括 reducer 和 effects。
 
@@ -303,6 +430,12 @@ class StoreModule:
 
         Returns:
             更新後的 Store 實例。
+            
+        範例:
+            ```python
+            # 使用 StoreModule 卸載功能
+            store = StoreModule.unregister_feature("temporary_feature", store)
+            ```
         """
         store.unregister_feature(feature_key)
         return store
@@ -311,10 +444,12 @@ class StoreModule:
 class EffectsModule:
     """
     用於配置 Effects 的工具類，類似於 NgRx 的 EffectsModule。
+    
+    提供一種靜態方法的方式來管理 Store 實例的 Effects。
     """
 
     @staticmethod
-    def register_root(effects_items, store: Store):
+    def register_root(effects_items: Any, store: Store[S]) -> Store[S]:
         """
         註冊根級的 effects。
 
@@ -324,12 +459,18 @@ class EffectsModule:
 
         Returns:
             更新後的 Store 實例。
+            
+        範例:
+            ```python
+            # 使用 EffectsModule 註冊全局 effects
+            store = EffectsModule.register_root([LoggingEffects(), ApiEffects()], store)
+            ```
         """
         store.register_effects(effects_items)
         return store
 
     @staticmethod
-    def register_feature(effects_item, store: Store):
+    def register_feature(effects_item: Any, store: Store[S]) -> Store[S]:
         """
         註冊一個特性模組的 effects。
 
@@ -339,6 +480,12 @@ class EffectsModule:
 
         Returns:
             更新後的 Store 實例。
+            
+        範例:
+            ```python
+            # 使用 EffectsModule 註冊特性模組的 effects
+            store = EffectsModule.register_feature(UserEffects(), store)
+            ```
         """
         store.register_effects(effects_item)
         return store
