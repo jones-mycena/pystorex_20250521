@@ -1,7 +1,7 @@
 from pystorex.effects import create_effect
 from reactivex import operators as ops
 
-from .counter_actions import (
+from counter_actions import (
     load_count_request,
     load_count_success,
     load_count_failure,

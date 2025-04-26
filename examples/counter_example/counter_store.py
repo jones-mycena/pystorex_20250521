@@ -1,6 +1,6 @@
 from pystorex import create_store, StoreModule, EffectsModule
-from .counter_reducers import counter_reducer
-from .counter_effects import CounterEffects
+from counter_reducers import counter_reducer
+from counter_effects import CounterEffects
 
 # 創建Store
 store = create_store()

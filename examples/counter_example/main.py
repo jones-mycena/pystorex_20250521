@@ -3,9 +3,9 @@ sys.path.append(r"c:\work\pystorex")
 
 import json
 import time
-from counter_example.counter_store import store
-from counter_example.counter_actions import increment, increment_by, decrement, reset, load_count_request
-from counter_example.counter_selectors import get_count, get_counter_info
+from counter_store import store
+from counter_actions import increment, increment_by, decrement, reset, load_count_request
+from counter_selectors import get_count, get_counter_info
 
 if __name__ == "__main__":
     # 訂閱狀態變化
@@ -22,10 +22,11 @@ if __name__ == "__main__":
 
     # 分發actions
     print("\n==== 開始測試基本操作 ====")
-    store.dispatch(increment(payload=1))  # 添加 payload
+    store.dispatch(increment())  
     store.dispatch(increment_by(5))
-    store.dispatch(decrement(payload=1))  # 添加 payload
+    store.dispatch(decrement())  
     store.dispatch(reset(10))
+    store.dispatch(increment_by(99))  
 
     # 觸發異步action
     print("\n==== 開始測試異步操作 ====")

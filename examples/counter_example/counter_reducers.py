@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 from pystorex import create_reducer, on
 from pystorex.actions import create_action
-from .counter_actions import (
+from counter_actions import (
     increment,
     decrement,
     reset,
