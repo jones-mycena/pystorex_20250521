@@ -151,7 +151,16 @@ class Store(Generic[S]):
         def dispatch(action: Any) -> Any:
             # 抓取 action 傳入前的舊狀態
             prev_state = self._state
-            # 調用中介軟體的 on_next 方法
+            # 這裡明確判斷 callable (Thunk function)
+            if callable(action):
+                # 若為thunk，直接執行，不調用middleware hooks
+                try:
+                    return action(self.dispatch, lambda: self.state)
+                except Exception as err:
+                    mw.on_error(err, action)
+                    raise
+
+            # 一般action物件才調用中介軟體的 on_next 方法
             mw.on_next(action, prev_state)
 
             try:
