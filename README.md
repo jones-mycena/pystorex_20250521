@@ -1,6 +1,23 @@
 # Pystorex
 
+<p align="center">
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex.svg">
+  </a>
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex.svg">
+  </a>
+  <a href="https://joneshong.github.io/pystorex/en/index.html">
+    <img alt="Documentation" src="https://img.shields.io/badge/docs-ghpages-blue.svg">
+  </a>
+  <a href="https://github.com/JonesHong/pystorex/blob/master/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/JonesHong/pystorex.svg">
+  </a>
+  <a href="https://deepwiki.com/JonesHong/pystorex"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+</p>
+
 A lightweight Python state management library inspired by NgRx/Redux patterns and ReactiveX for Python (`reactivex`). Manage application state with reducers, handle side effects with effects, compose middleware, and select state slices efficiently.
+
 
 ---
 
