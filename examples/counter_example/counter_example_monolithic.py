@@ -27,6 +27,9 @@ load_count_request = create_action("loadCountRequest")
 load_count_success = create_action("loadCountSuccess", lambda value: value)
 load_count_failure = create_action("loadCountFailure", lambda error: error)
 
+# 新增警告 action
+count_warning = create_action("countWarning", lambda count: count)
+
 # ====== 3. 定義 Reducer ======
 def counter_handler(state: CounterState, action) -> CounterState:
     # 使用 Pydantic deep copy 確保 immutable。
@@ -87,6 +90,15 @@ class CounterEffects:
             ops.do_action(lambda action: print(f"[Log] Action: {action.type}")),
             ops.filter(lambda _: False)
         )
+        
+    @create_effect(dispatch=False)
+    def handle_count_warning(self, action_stream):
+        """處理計數器過高的警告"""
+        return action_stream.pipe(
+            ops.filter(lambda action: action.type == count_warning.type),
+            ops.do_action(lambda action: print(f"[Warning] 計數器超過閾值! 目前值: {action.payload}")),
+            ops.filter(lambda _: False)
+        )
 
 # ====== 5. 建立 Store、註冊模組 ======
 storage = create_store()
@@ -104,13 +116,21 @@ get_count = create_selector(
 )
 storage.select(get_count).subscribe(lambda c: print(f"Count: {c}"))
 
+# 新增 selector 監控 count 並在超過閾值時發出警告
+def count_warning_monitor(value_tuple):
+    old_value, new_value = value_tuple
+    if new_value > 8 and (old_value <= 8 or old_value is None):
+        storage.dispatch(count_warning(new_value))
+
+storage.select(get_count).subscribe(count_warning_monitor)
+
 # ====== 7. 執行操作示例 ======
 if __name__ == "__main__":
     # 基本操作
     storage.dispatch(increment())
     storage.dispatch(increment_by(5))
     storage.dispatch(decrement())
-    storage.dispatch(reset(10))
+    storage.dispatch(reset(10))  # 應該觸發警告，因為 count > 8
 
     # 模擬 API 加載
     storage.dispatch(load_count_request())
