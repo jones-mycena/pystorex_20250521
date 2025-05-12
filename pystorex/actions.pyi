@@ -3,12 +3,28 @@ PyStoreX Actions 模組的類型存根文件。
 提供高精度的類型提示，無實際執行代碼。
 """
 
-from typing import TypeVar, Generic, Callable, NamedTuple, Optional, Dict, Any, List, overload
+from typing import TypeVar, Generic, Callable, Optional, Dict, Any, List, overload
 from .types import E, P, ActionCreator, ActionCreatorWithoutPayload, ActionCreatorWithPayload
 
-class Action(Generic[P], NamedTuple):
+class Action(Generic[P]):
+    __slots__: tuple[str, ...]
     type: str
-    payload: Optional[P] = ...
+    payload: Optional[P]
+    
+    def __init__(self, type: str, payload: Optional[P] = None) -> None: ...
+    def __setattr__(self, name: str, value: Any) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class ActionPool:
+    _no_payload_pool: Dict[str, Action]
+    _simple_payload_pool: Dict[str, Dict[Any, Action]]
+    
+    @classmethod
+    def get(cls, action_type: str, payload: Any = None) -> Action: ...
+
+def _process_payload(payload: Any) -> Any: ...
 
 @overload
 def create_action(action_type: str) -> ActionCreatorWithoutPayload: ...

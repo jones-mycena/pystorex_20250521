@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, cast, overload
 from reactivex import operators as ops
 from reactivex import Observable
 from reactivex.disposable import Disposable
+from .errors import EffectError, global_error_handler
 from .actions import Action
 from .types import (
     T, EffectFunction, EffectCreator, EffectDecorator, 
@@ -216,24 +217,27 @@ class EffectsManager:
                             self.subscriptions.append(subscription)
                             self._subs_by_module[module].append(subscription)
                     except Exception as e:
+                        # 使用新的錯誤類型
+                        effect_error = EffectError(
+                            f"註冊效果 {name} 時出錯: {e}",
+                            effect_name=name,
+                            module_name=module.__class__.__name__
+                        )
+                        global_error_handler.handle(effect_error)
                         print(f"註冊效果 {name} 時出錯: {e}")
 
-    def _handle_effect_error(self, module: Any, name: str) -> Callable[[Exception, Observable], Observable]:
-        """
-        處理 Effect 執行過程中的錯誤。
-
-        Args:
-            module: 發生錯誤的模組。
-            name: 發生錯誤的 Effect 名稱。
-            
-        Returns:
-            錯誤捕獲函數。
-        """
-        def catcher(err: Exception, source: Observable) -> Observable:
-            print(f"[Error][Effect {module.__class__.__name__}.{name}]:", err)
-            # 可以在這裡插入重試、上報或其他處理邏輯
-            return source  # 返回原始資料流以繼續處理
-        return catcher
+    def _handle_effect_error(self, module: Any, name: str, err: Exception) -> None:
+        """處理 Effect 執行過程中的錯誤。"""
+        # 創建結構化錯誤
+        effect_error = EffectError(
+            str(err),
+            effect_name=name,
+            module_name=module.__class__.__name__,
+            original_error=err
+        )
+        # 上報給錯誤處理器
+        global_error_handler.handle(effect_error)
+        print(f"[Error][Effect {module.__class__.__name__}.{name}]:", err)
 
     def _dispatch_if_action(self, module: Any, effect_fn: Callable) -> Callable[[Any], None]:
         """

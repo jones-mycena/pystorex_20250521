@@ -22,7 +22,8 @@ classifiers = [
 ]
 dependencies = [
   "reactivex>=1.6",
-  "pydantic>=1.10"
+  "pydantic>=1.10",
+  "immutables>=0.21"
 ]
 
 [project.optional-dependencies]

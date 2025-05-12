@@ -5,16 +5,19 @@
 實現日誌記錄、錯誤處理、性能監控等功能。
 """
 
+import datetime
 import threading
 import asyncio
 import json
 import time
+import traceback
 from types import MappingProxyType
 from copy import deepcopy
 from typing import (
     Any, Callable, Dict, List, Optional, Tuple, Union, cast
 )
 
+from .errors import ActionError, PyStoreXError, global_error_handler
 from .actions import create_action, Action
 from .types import (
     NextDispatch, MiddlewareFactory, MiddlewareFunction, DispatchFunction, 
@@ -57,6 +60,11 @@ class BaseMiddleware:
         Args:
             error: 拋出的異常
             action: 導致異常的 Action
+        """
+        pass
+    def teardown(self) -> None:
+        """
+        當 Store 清理資源時調用，用於清理中介軟體持有的資源。
         """
         pass
 
@@ -424,6 +432,13 @@ class DebounceMiddleware(BaseMiddleware, MiddlewareProtocol):
                 timer.start()
             return dispatch
         return middleware
+    def teardown(self) -> None:
+        """
+        清理所有計時器。
+        """
+        for timer in self._timers.values():
+            timer.cancel()
+        self._timers.clear()
 
 
 # ———— BatchMiddleware ————
@@ -515,3 +530,101 @@ class AnalyticsMiddleware(BaseMiddleware, MiddlewareProtocol):
             action: 剛剛 dispatch 的 Action
         """
         self.callback(action, None, next_state)
+        
+        
+# ———— ErrorMiddleware ————    
+class ErrorMiddleware(BaseMiddleware, MiddlewareProtocol):
+    """捕獲 dispatch 過程中的異常，dispatch 全域錯誤 Action，自動上報到錯誤處理系統。"""
+    def __call__(self, store: Store[Any]) -> MiddlewareFunction:
+        def middleware(next_dispatch: NextDispatch) -> DispatchFunction:
+            def dispatch(action: Action[Any]) -> Any:
+                try:
+                    return next_dispatch(action)
+                except Exception as err:
+                    # 使用新的錯誤類型
+                    action_error = ActionError(
+                        str(err), 
+                        action_type=action.type, 
+                        payload=action.payload,
+                        original_error=err
+                    )
+                    # 上報給錯誤處理器
+                    global_error_handler.handle(action_error)
+                    # 還是照常分發錯誤 Action
+                    store.dispatch(global_error({
+                        "error": str(err),
+                        "action": action.type,
+                        "error_type": action_error.__class__.__name__
+                    }))
+                    raise action_error
+            return dispatch
+        return middleware
+
+# ———— ErrorReportMiddleware ————
+class ErrorReportMiddleware(BaseMiddleware, MiddlewareProtocol):
+    """記錄錯誤並提供開發時的詳細錯誤報告。"""
+    
+    def __init__(self, report_file: str = "pystorex_error_report.html"):
+        """
+        初始化錯誤報告中介軟體。
+        
+        Args:
+            report_file: 錯誤報告輸出文件路徑
+        """
+        self.report_file = report_file
+        self.error_history: List[Dict[str, Any]] = []
+        
+        # 註冊到全局錯誤處理器
+        global_error_handler.register_handler(self._log_error)
+    
+    def on_error(self, error: Exception, action: Action[Any]) -> None:
+        """記錄錯誤到錯誤歷史。"""
+        if isinstance(error, PyStoreXError):
+            self._log_error(error, action)
+        else:
+            error_info = {
+                "timestamp": time.time(),
+                "error_type": error.__class__.__name__,
+                "message": str(error),
+                "action": action.type if hasattr(action, "type") else str(action),
+                "stacktrace": traceback.format_exc()
+            }
+            self.error_history.append(error_info)
+    
+    def _log_error(self, error: PyStoreXError, action: Optional[Action[Any]] = None) -> None:
+        """記錄結構化錯誤。"""
+        error_info = error.to_dict()
+        error_info["timestamp"] = time.time()
+        if action:
+            error_info["action"] = action.type
+        self.error_history.append(error_info)
+        self._generate_report()
+    
+    def _generate_report(self) -> None:
+        """生成HTML錯誤報告。"""
+        try:
+            with open(self.report_file, "w") as f:
+                f.write("<html><head><title>PyStoreX Error Report</title>")
+                f.write("<style>/* CSS 樣式 */</style></head><body>")
+                f.write("<h1>PyStoreX Error Report</h1>")
+                
+                for error in self.error_history:
+                    f.write(f"<div class='error'>")
+                    f.write(f"<h2>{error['error_type']}: {error['message']}</h2>")
+                    f.write(f"<p>時間: {datetime.fromtimestamp(error['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}</p>")
+                    if 'action' in error:
+                        f.write(f"<p>觸發 Action: {error['action']}</p>")
+                    
+                    f.write("<h3>詳細信息:</h3><ul>")
+                    for k, v in error.get('details', {}).items():
+                        f.write(f"<li><strong>{k}:</strong> {v}</li>")
+                    f.write("</ul>")
+                    
+                    if 'traceback' in error:
+                        f.write(f"<h3>堆疊追蹤:</h3><pre>{error['traceback']}</pre>")
+                    
+                    f.write("</div><hr>")
+                
+                f.write("</body></html>")
+        except Exception as e:
+            print(f"無法生成錯誤報告: {e}")

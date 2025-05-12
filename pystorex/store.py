@@ -9,6 +9,7 @@ import inspect
 from typing import Dict, Callable, Any, Generic, Optional, List, Union, cast
 from reactivex import Observable, operators as ops
 from reactivex import Subject
+from .errors import StoreError, global_error_handler, handle_error
 from .reducers import ReducerFunction, ReducerManager
 from .effects import EffectsManager
 from .actions import Action, init_store, update_reducer
@@ -88,8 +89,19 @@ class Store(Generic[S]):
             on_next=lambda action: self._update_state(
                 self._reducer_manager.reduce(self._state, action)
             ),
-            on_error=lambda err: print(f"存儲錯誤: {err}")  # 捕捉錯誤並打印
+            on_error=self._handle_store_error
         )
+    
+    
+    def _handle_store_error(self, err: Exception) -> None:
+        """處理 Store 內部錯誤。"""
+        store_error = StoreError(
+            str(err),
+            operation="reduce_state",
+            state=self._state
+        )
+        global_error_handler.handle(store_error)
+        print(f"Store 錯誤: {err}")
 
     def _update_state(self, new_state: Dict[str, Any]) -> None:
         """
@@ -267,6 +279,7 @@ class Store(Generic[S]):
         """
         return cast(S, self._state)
 
+    @handle_error
     def register_root(self, root_reducers: Dict[str, ReducerFunction]) -> None:
         """
         註冊應用的根級 reducers。
@@ -289,6 +302,7 @@ class Store(Generic[S]):
             None, init_store()
         )
 
+    @handle_error
     def register_feature(self, feature_key: str, reducer: ReducerFunction) -> 'Store[S]':
         """
         註冊一個特性模組的 reducer。
@@ -354,6 +368,55 @@ class Store(Generic[S]):
             ```
         """
         self._effects_manager.add_effects(*effects_modules)
+    
+    def __enter__(self) -> 'Store[S]':
+        """
+        進入上下文，返回 Store 實例自身。
+        
+        Returns:
+            Store 實例
+            
+        範例:
+            ```python
+            with create_store() as store:
+                store.register_root({"counter": counter_reducer})
+                store.dispatch(increment())
+            # 當退出 with 區塊時，store 會自動清理資源
+            ```
+        """
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        退出上下文時清理資源。
+        
+        Args:
+            exc_type: 異常類型，如果沒有異常則為 None
+            exc_val: 異常值，如果沒有異常則為 None
+            exc_tb: 異常追蹤信息，如果沒有異常則為 None
+        """
+        self.teardown()
+        
+    def teardown(self) -> None:
+        """
+        清理 Store 的所有資源。
+        
+        此方法會：
+        1. 卸載所有 effects
+        2. 關閉所有 Subject
+        3. 清理所有中介軟體的資源
+        """
+        # 清理 effects 管理器
+        self._effects_manager.teardown()
+        
+        # 關閉 Subjects
+        self._action_subject.dispose()
+        self._state_subject.dispose()
+        
+        # 清理中介軟體資源
+        for mw in self._middleware:
+            if hasattr(mw, "teardown") and callable(mw.teardown):
+                mw.teardown()
 
 
 def create_store() -> Store[Dict[str, Any]]:
