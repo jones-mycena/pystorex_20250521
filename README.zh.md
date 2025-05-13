@@ -1,4 +1,23 @@
 # Pystorex
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JonesHong/pystorex/refs/heads/master/assets/images/logo.png" alt="pystorex icon" width="200"/>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex.svg">
+  </a>
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex.svg">
+  </a>
+  <a href="https://joneshong.github.io/pystorex/en/index.html">
+    <img alt="Documentation" src="https://img.shields.io/badge/docs-ghpages-blue.svg">
+  </a>
+  <a href="https://github.com/JonesHong/pystorex/blob/master/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/JonesHong/pystorex.svg">
+  </a>
+  <a href="https://deepwiki.com/JonesHong/pystorex"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+</p>
 
 輕量級 Python 狀態管理函式庫，靈感來自 NgRx/Redux 模式及 ReactiveX for Python (`reactivex`)。使用 reducer 管理應用狀態，使用 effects 處理副作用，支援 middleware 組合以及高效選擇器。
 

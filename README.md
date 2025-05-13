@@ -1,4 +1,7 @@
 # Pystorex
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JonesHong/pystorex/refs/heads/master/assets/images/logo.png" alt="pystorex icon" width="200"/>
+</p>
 
 <p align="center">
   <a href="https://pypi.org/project/pystorex/">
