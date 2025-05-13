@@ -5,7 +5,7 @@
 提供具體的錯誤類型、豐富的上下文信息和結構化的錯誤報告機制。
 """
 
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Callable, Dict, Any, Optional, List, Tuple, Union
 import traceback
 
 
