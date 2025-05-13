@@ -7,8 +7,11 @@
 
 import inspect
 from typing import Dict, Callable, Any, Generic, Optional, List, Union, cast
+from immutables import Map
 from reactivex import Observable, operators as ops
 from reactivex import Subject
+
+from .immutable_utils import to_immutable
 from .errors import StoreError, global_error_handler, handle_error
 from .reducers import ReducerFunction, ReducerManager
 from .effects import EffectsManager
@@ -104,18 +107,18 @@ class Store(Generic[S]):
         print(f"Store 錯誤: {err}")
 
     def _update_state(self, new_state: Dict[str, Any]) -> None:
-        """
-        更新內部狀態並通知訂閱者。
-
-        Args:
-            new_state: 新的狀態。
-        """
+        """更新內部狀態，確保始終使用 Map"""
         # 保存舊狀態
         old_state = self._state
-        # 更新為新狀態
-        self._state = new_state
-        # 通知訂閱者，傳遞舊狀態與新狀態的元組
-        self._state_subject.on_next((old_state, new_state))
+        
+        # 確保新狀態是 Map 
+        if isinstance(new_state, Map):
+            self._state = new_state
+        else:
+            self._state = to_immutable(new_state)
+            
+        # 通知訂閱者
+        self._state_subject.on_next((old_state, self._state))
 
     def _dispatch_core(self, action: Action[Any]) -> Action[Any]:
         """

@@ -6,6 +6,11 @@
 """
 
 from typing import Dict, Any, Callable, Union, Tuple, Optional, overload, cast
+
+from immutables import Map
+from pydantic import BaseModel
+
+from pystorex.immutable_utils import to_immutable
 from .actions import Action
 from .types import (
     S, P, ActionHandler, HandlerMap, ReducerFunction, 
@@ -41,6 +46,12 @@ def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler],
         ... )
     """
     action_handlers: HandlerMap = {}  # 儲存 action 類型與處理函式的對應關係
+        
+    # 記錄原始類型以便在需要時轉換回來
+    original_type = initial_state.__class__ if isinstance(initial_state, BaseModel) else None
+    
+    # 轉換初始狀態為不可變 Map
+    immutable_initial_state = to_immutable(initial_state)
     
     for handler in handlers:
         if isinstance(handler, tuple) and len(handler) == 2:
@@ -66,12 +77,21 @@ def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler],
             return state  # 如果沒有 action，返回當前狀態
             
         handler = action_handlers.get(action.type)  # 根據 action 類型查找處理函式
-        if handler:
-            return handler(state, action)  # 執行處理函式
+        if handler: 
+            # 調用 handler 獲取結果
+            result = handler(state, action)
+            
+            # 確保結果是不可變的 Map
+            if isinstance(result, Map):
+                return result
+            else:
+                # 如果 handler 返回了非 Map 對象 (例如 Pydantic 或字典)，統一轉換
+                return to_immutable(result)
         return state  # 如果沒有對應處理函式，返回原狀態
     
-    # 設置 reducer 的初始狀態和處理器映射
-    reducer.initial_state = initial_state  # type: ignore
+    # 設定 reducer 的元資料
+    reducer.initial_state = immutable_initial_state  # type: ignore
+    reducer.original_type = original_type  # type: ignore
     reducer.handlers = action_handlers  # type: ignore
     
     return reducer
@@ -169,7 +189,7 @@ class ReducerManager:
         """
         return self._feature_reducers.copy()
 
-    def reduce(self, state: Optional[Dict[str, Any]] = None, action: Optional[Action[Any]] = None) -> Dict[str, Any]:
+    def reduce(self, state: Optional[Union[Dict[str, Any], Map]] = None, action: Optional[Action[Any]] = None) -> Map:
         """
         使用所有註冊的 reducers 處理 action 並返回新狀態。
 
@@ -178,21 +198,31 @@ class ReducerManager:
             action: 要處理的 action，默認為 None。
 
         Returns:
-            新的 root state。
+            新的 root state (Map)。
         """
         if state is None:
             state = self._state  # 如果 state 為 None，使用內部的 _state
 
-        new_state = state.copy()  # 浅拷貝，避免修改原始 state
+        # 確保 state 是 Map
+        if not isinstance(state, Map):
+            # 如果不是 Map，則轉換為 Map
+            state_map = Map(state)
+        else:
+            state_map = state
+
+        # 創建 Map 的可變 evolver
+        evolver = state_map.mutate()
 
         for feature_key, reducer in self._feature_reducers.items():
             # 獲取當前功能模組的狀態，若不存在則使用初始狀態
-            prev_substate = state.get(feature_key, reducer.initial_state)  # type: ignore
+            prev_substate = state_map.get(feature_key, reducer.initial_state)  # type: ignore
             next_substate = reducer(prev_substate, action)  # 使用 reducer 處理 action
 
             if next_substate is not prev_substate:
-                # 如果狀態有變化，更新到新狀態中
-                new_state[feature_key] = next_substate
+                # 如果狀態有變化，更新到 evolver
+                evolver[feature_key] = next_substate
 
-        self._state = new_state  # 保存最新的 root state
-        return new_state
+        # 完成所有更改並生成新的 Map
+        result_map = evolver.finish()
+        self._state = result_map  # 保存最新的 root state
+        return result_map
