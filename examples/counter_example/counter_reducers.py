@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import Optional, TypedDict
 
 from pydantic import BaseModel
 from pystorex import create_reducer, on
@@ -13,82 +13,67 @@ from counter_actions import (
     load_count_success,
     load_count_failure,
 )
+from pystorex.map_utils import batch_update
+
 
 # ====== Model Definition ======
-class CounterState(BaseModel):
-    count: int = 0
-    loading: bool = False
-    error: Optional[str] = None
-    last_updated: Optional[float] = None
+class CounterState(TypedDict):
+    count: int
+    loading: bool
+    error: Optional[str]
+    last_updated: Optional[float]
 
-# ====== Utility Functions ======
-def state_copy(state: CounterState):
-    new_state = state.model_copy()
-    now = time.time()
-    return new_state, now
+
+counter_initial_state = CounterState(
+    count=0, loading=False, error=None, last_updated=None
+)
+
 
 # ====== Handlers ======
 def increment_handler(state: CounterState, action) -> CounterState:
-    if action.type == increment.type:
-        new_state, now = state_copy(state)
-        new_state.count += 1
-        new_state.last_updated = now
-        return new_state
-    return state  # 如果不是 increment action，返回原狀態
+    return batch_update(
+        state, {"count": state["count"] + 1, "last_updated": time.time()}
+    )
+
 
 def decrement_handler(state: CounterState, action) -> CounterState:
-    if action.type == decrement.type:
-        new_state, now = state_copy(state)
-        new_state.count -= 1
-        new_state.last_updated = now
-        return new_state
-    return state  # 如果不是 decrement action，返回原狀態
+    return batch_update(
+        state, {"count": state["count"] - 1, "last_updated": time.time()}
+    )
+
 
 def reset_handler(state: CounterState, action) -> CounterState:
-    if action.type == reset.type:
-        new_state, now = state_copy(state)
-        new_state.count = action.payload
-        new_state.last_updated = now
-        return new_state
-    return state  # 如果不是 reset action，返回原狀態
+    return batch_update(state, {"count": action.payload, "last_updated": time.time()})
+
 
 def increment_by_handler(state: CounterState, action) -> CounterState:
-    if action.type == increment_by.type:
-        new_state, now = state_copy(state)
-        new_state.count += action.payload
-        new_state.last_updated = now
-        return new_state
-    return state  # 如果不是 increment_by action，返回原狀態
+    return batch_update(
+        state, {"count": state["count"] + action.payload, "last_updated": time.time()}
+    )
+
 
 def load_count_request_handler(state: CounterState, action) -> CounterState:
-    if action.type == load_count_request.type:
-        new_state, now = state_copy(state)
-        new_state.loading = True
-        new_state.error = None
-        return new_state
-    return state  # 如果不是 load_count_request action，返回原狀態
+    return batch_update(
+        state, {"loading": True, "error": None, "last_updated": time.time()}
+    )
+
 
 def load_count_success_handler(state: CounterState, action) -> CounterState:
-    if action.type == load_count_success.type:
-        new_state, now = state_copy(state)
-        new_state.loading = False
-        new_state.count = action.payload
-        new_state.last_updated = now
-        return new_state
-    return state  # 如果不是 load_count_success action，返回原狀態
+    return batch_update(
+        state, {"count": action.payload, "loading": False, "last_updated": time.time()}
+    )
+
 
 def load_count_failure_handler(state: CounterState, action) -> CounterState:
-    if action.type == load_count_failure.type:
-        new_state, now = state_copy(state)
-        new_state.loading = False
-        new_state.error = action.payload
-        return new_state
-    return state  # 如果不是 load_count_failure action，返回原狀態
-    
-    
+    return batch_update(
+        state, {"loading": False, "error": action.payload, "last_updated": time.time()}
+    )
+
+
 # ====== Reducer ======
 counter_reducer = create_reducer(
-    CounterState(),
+    # CounterState(),
+    counter_initial_state,
     on(increment, increment_handler),
     on(decrement, decrement_handler),
     on(reset, reset_handler),
