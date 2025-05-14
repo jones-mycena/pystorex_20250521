@@ -53,8 +53,10 @@ from .middleware import (
     PersistMiddleware, DevToolsMiddleware, PerformanceMonitorMiddleware,
     DebounceMiddleware, BatchMiddleware, AnalyticsMiddleware
 )
+from .rx_operators import ofType
 from .reducers import create_reducer, on, ReducerManager
 from .effects import Effect, create_effect, EffectsManager
+from .actions import Action, create_action
 from .store import Store, create_store, StoreModule, EffectsModule
 from .store_selectors import create_selector
 from .immutable_utils import to_immutable, to_dict, to_pydantic
@@ -93,4 +95,7 @@ __all__ = [
     
     # Map Utils
     "update_in", "batch_update"
+    
+    # Operators
+    "ofType"
 ]

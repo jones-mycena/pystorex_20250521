@@ -106,22 +106,14 @@ def on(action_type: str, handler: Callable[[S, Action[Any]], S]) -> Dict[str, Ac
 def on(action_creator_or_type: Union[Callable[..., Action[Any]], str], 
        handler: Callable[[S, Action[Any]], S]) -> Dict[str, ActionHandler]:
     """
-    創建一個 action 類型與處理函式的映射。
+    創建一個 action 類型與處理函式的映射，同時包裝 handler 以只處理特定類型的 action。
 
     Args:
         action_creator_or_type: Action 創建器函式或 Action 類型字串。
         handler: 處理該 Action 的函式，接收 (state, action) 並返回新狀態。
 
     Returns:
-        一個包含 {action_type: handler} 的字典。
-        
-    範例:
-        >>> # 使用 action creator
-        >>> increment = create_action("[Counter] Increment")
-        >>> on(increment, lambda state, action: state + 1)
-        >>> 
-        >>> # 使用 action type 字串
-        >>> on("[Counter] Increment", lambda state, action: state + 1)
+        一個包含 {action_type: wrapped_handler} 的字典。
     """
     if callable(action_creator_or_type) and hasattr(action_creator_or_type, 'type'):
         # 如果是 action 創建器函式，則提取其類型
@@ -130,7 +122,15 @@ def on(action_creator_or_type: Union[Callable[..., Action[Any]], str],
         # 否則直接將其轉為字串作為類型
         action_type = str(action_creator_or_type)
     
-    return {action_type: handler}  # 返回 action 類型與處理函式的映射
+    # 包裝 handler 以便它只處理特定類型的 action
+    def wrapped_handler(state: S, action: Action[Any]) -> S:
+        # 由於 reducer 已經檢查了 action.type，這裡其實可以不再檢查
+        # 但為了安全起見，再檢查一次也無妨
+        if action.type == action_type:
+            return handler(state, action)
+        return state
+    
+    return {action_type: wrapped_handler}
 
 
 class ReducerManager:

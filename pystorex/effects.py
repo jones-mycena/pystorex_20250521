@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, cast, overload
 from reactivex import operators as ops
 from reactivex import Observable
 from reactivex.disposable import Disposable
+
 from .errors import EffectError, global_error_handler
 from .actions import Action
 from .types import (
@@ -38,6 +39,7 @@ class Effect(EffectType[T]):
             source: 一個 Observable，表示副作用的資料流。
         """
         self.source = source
+        
 
 
 @overload
@@ -172,13 +174,13 @@ class EffectsManager:
             try:
                 instances.append(cls(**params))
             except Exception as e:
-                print(f"無法創建 {cls.__name__} 實例: {e}")
+                print(f"Could not create instance of {cls.__name__}: {e}")
         # 如果是類別，直接實例化
         elif inspect.isclass(item):
             try:
                 instances.append(item())
             except Exception as e:
-                print(f"無法創建 {item.__name__} 實例: {e}")
+                print(f"Could not create instance of {item.__name__}: {e}")
         # 如果已經是實例，直接添加
         else:
             instances.append(item)
@@ -211,7 +213,7 @@ class EffectsManager:
                                         if getattr(member, "dispatch", True)  # 是否自動 dispatch
                                         else lambda _: None
                                     ),
-                                    on_error=lambda err: print(f"副作用錯誤: {err}"),
+                                    on_error=lambda err: print(f"Effect error: {err}"),
                                 )
                             )
                             self.subscriptions.append(subscription)
@@ -219,12 +221,12 @@ class EffectsManager:
                     except Exception as e:
                         # 使用新的錯誤類型
                         effect_error = EffectError(
-                            f"註冊效果 {name} 時出錯: {e}",
+                            f"Error registering effect {name}: {e}",
                             effect_name=name,
                             module_name=module.__class__.__name__
                         )
                         global_error_handler.handle(effect_error)
-                        print(f"註冊效果 {name} 時出錯: {e}")
+                        print(f"Error registering effect {name}: {e}")
 
     def _handle_effect_error(self, module: Any, name: str, err: Exception) -> None:
         """處理 Effect 執行過程中的錯誤。"""
@@ -258,7 +260,7 @@ class EffectsManager:
             else:
                 print(
                     f"[Warning] Effect {module.__class__.__name__}.{effect_fn.__name__} "
-                    f"emitted non‑Action: {item!r}"
+                    f"emitted non-Action: {item!r}"
                 )
         return dispatcher
 
