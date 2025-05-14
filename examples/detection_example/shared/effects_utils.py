@@ -1,5 +1,6 @@
 # shared/effects_utils.py
 from reactivex import operators as ops, compose
+from pystorex.rx_operators import ofType
 from shared.detection_store import store
 from shared.detection_actions import visual_recognition
 
@@ -15,7 +16,8 @@ def make_log_effect(selector, action_creator):
     """
     return compose(
         # 1. 只处理 visualRecognition
-        ops.filter(lambda action: action.type == visual_recognition.type),
+        # ops.filter(lambda action: action.type == visual_recognition.type),
+        ofType(visual_recognition),
         # 2. 拿最新 state
         ops.map(lambda _: store.state),
         # 3. 过滤／转成「集合」
