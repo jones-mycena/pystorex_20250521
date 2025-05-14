@@ -4,15 +4,23 @@ PyStoreX Actions 模組的類型存根文件。
 """
 
 from typing import TypeVar, Generic, Callable, Optional, Dict, Any, List, overload
+
+from immutables import Map
 from .types import E, P, ActionCreator, ActionCreatorWithoutPayload, ActionCreatorWithPayload
 
 class Action(Generic[P]):
-    __slots__: tuple[str, ...]
-    type: str
-    payload: Optional[P]
+    """表示一個有類型和可選負載的動作。"""
+    
+    _data: Map  # 新增：內部數據存儲
     
     def __init__(self, type: str, payload: Optional[P] = None) -> None: ...
-    def __setattr__(self, name: str, value: Any) -> None: ...
+    
+    @property
+    def type(self) -> str: ...
+    
+    @property
+    def payload(self) -> Optional[P]: ...
+    
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
     def __repr__(self) -> str: ...
@@ -24,7 +32,6 @@ class ActionPool:
     @classmethod
     def get(cls, action_type: str, payload: Any = None) -> Action: ...
 
-def _process_payload(payload: Any) -> Any: ...
 
 @overload
 def create_action(action_type: str) -> ActionCreatorWithoutPayload: ...
