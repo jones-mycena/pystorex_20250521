@@ -7,7 +7,7 @@ from pydantic import BaseModel, create_model
 T = TypeVar('T', bound=BaseModel)
 TD = TypeVar("TD", bound=TypedDict) # type: ignore
 
-def to_immutable(obj: Any) -> Any:
+def to_immutable(obj: Any) -> Map:
     """將任何對象轉換為不可變形式 (包括 Pydantic 模型)"""
     if isinstance(obj, BaseModel):
         # Pydantic 模型轉為 Map
@@ -26,7 +26,7 @@ def to_immutable(obj: Any) -> Any:
 
 
 
-def to_dict(obj: Any) -> Any:
+def to_dict(obj: Any) -> dict:
     """將 Map 及其巢狀結構轉換為普通字典"""
     if isinstance(obj, Map):
         return {k: to_dict(v) for k, v in obj.items()}

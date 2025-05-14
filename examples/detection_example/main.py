@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import sys
-
+from reactivex import operators as ops
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import time
@@ -20,29 +20,29 @@ from fence.fence_reducer import fence_status_reducer
 
 store.register_root(
     {
-        # "helmet_status": helmet_status_reducer,
+        "helmet_status": helmet_status_reducer,
         "fence_status": fence_status_reducer
     }
 )
 
 store.register_effects(
-    # HelmetEffects,
+    HelmetEffects,
     FenceEffects
 )
-# get_helmet_status_state = lambda state: state["helmet_status"]
+get_helmet_status_state = lambda state: state["helmet_status"]
 get_fence_status_state = lambda state: state["fence_status"]
-# get_helmet_states = create_selector(
-#     get_helmet_status_state, result_fn=lambda state: state.helmet_states or {}
-# )
+get_helmet_states = create_selector(
+    get_helmet_status_state, result_fn=lambda state: state.get('helmet_states',{})
+)
 get_fence_states = create_selector(
     get_fence_status_state, result_fn=lambda state: state.get('fence_states',{})
 )
 if __name__ == "__main__":
-    # store._action_subject.subscribe(
-    #     on_next=lambda action: print(
-    #         f"分發動作: {action.type} - 负载: {action.payload}"
-    #     )
-    # )
+    store._action_subject.subscribe(
+        on_next=lambda action: print(
+            f"分發動作: {action.type} - 负载: {action.payload}"
+        )
+    )
     # 訂閱違規狀態的人員
     # store.select(get_violation_persons).subscribe(
     #     on_next=lambda violations_tuple: (
@@ -61,14 +61,16 @@ if __name__ == "__main__":
     #     )
     # )
     # # 訂閱並打印完整狀態
-    # store.select(get_helmet_states).subscribe(
-    #     on_next=lambda tpl: print(
-    #         "人員安全帽狀態變化:\n"
-    #         + json.dumps(tpl[1], ensure_ascii=False, indent=2)
-    #         + "\n"
-    #     )
-    # )
-    store.select(get_fence_states).subscribe(
+    store.select(get_helmet_states).subscribe(
+        on_next=lambda tpl: print(
+            "人員安全帽狀態變化:\n"
+            + json.dumps(to_dict(tpl[1]), ensure_ascii=False, indent=2)
+            + "\n"
+        )
+    )
+    store.select(get_fence_states).pipe(
+        # ops.filter(lambda fence_states: fence_states is not None),
+        ).subscribe(
         on_next=lambda tpl: print(
             "人員禁區狀態變化:\n"
             + json.dumps(
