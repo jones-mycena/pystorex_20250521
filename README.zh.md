@@ -41,72 +41,69 @@
 pip install pystorex
 ```
 
-> 需 Python 3.7+ 支援。
+> 需 Python 3.9+ 支援。
 
 ---
 
 ## 快速開始
 
+此範例展示如何透過 TypedDict 定義狀態，並使用 immutables.Map 處理狀態更新，以獲得更好的效能與清晰度。
+
 ```python
 import time
 from typing import Optional
-from pydantic import BaseModel
+from typing_extensions import TypedDict
 from reactivex import operators as ops
+from immutables import Map
 
 from pystorex.actions import create_action
 from pystorex import create_store, create_reducer, on, create_effect
 from pystorex.store_selectors import create_selector
 from pystorex.middleware import LoggerMiddleware
+from pystorex.map_utils import batch_update
 
-# 1. 定義狀態模型
-class CounterState(BaseModel):
-    count: int = 0
-    loading: bool = False
-    error: Optional[str] = None
-    last_updated: Optional[float] = None
+# 1. 定義狀態模型 (TypedDict)
+class CounterState(TypedDict):
+    count: int
+    loading: bool
+    error: Optional[str]
+    last_updated: Optional[float]
+
+counter_initial_state = CounterState(
+    count=0, loading=False, error=None, last_updated=None
+)
 
 # 2. 定義 Actions
 increment = create_action("increment")
 decrement = create_action("decrement")
 reset = create_action("reset", lambda value: value)
 increment_by = create_action("incrementBy", lambda amount: amount)
-
 load_count_request = create_action("loadCountRequest")
 load_count_success = create_action("loadCountSuccess", lambda value: value)
 load_count_failure = create_action("loadCountFailure", lambda error: error)
 
 # 3. 定義 Reducer
-def counter_handler(state: CounterState, action) -> CounterState:
-    new_state = state.copy(deep=True)
+
+def counter_handler(state: Map, action) -> Map:
     now = time.time()
-
     if action.type == increment.type:
-        new_state.count += 1
-        new_state.last_updated = now
+        return state.set("count", state["count"] + 1).set("last_updated", now)
     elif action.type == decrement.type:
-        new_state.count -= 1
-        new_state.last_updated = now
+        return batch_update(state, {"count": state["count"] - 1, "last_updated": now})
     elif action.type == reset.type:
-        new_state.count = action.payload
-        new_state.last_updated = now
+        return batch_update(state, {"count": action.payload, "last_updated": now})
     elif action.type == increment_by.type:
-        new_state.count += action.payload
-        new_state.last_updated = now
+        return batch_update(state, {"count": state["count"] + action.payload, "last_updated": now})
     elif action.type == load_count_request.type:
-        new_state.loading = True
-        new_state.error = None
+        return batch_update(state, {"loading": True, "error": None})
     elif action.type == load_count_success.type:
-        new_state.loading = False
-        new_state.count = action.payload
-        new_state.last_updated = now
+        return batch_update(state, {"loading": False, "count": action.payload, "last_updated": now})
     elif action.type == load_count_failure.type:
-        new_state.loading = False
-        new_state.error = action.payload
-
-    return new_state
+        return batch_update(state, {"loading": False, "error": action.payload})
+    return state
 
 counter_reducer = create_reducer(
-    CounterState(),
+    counter_initial_state,
     on(increment, counter_handler),
     on(decrement, counter_handler),
     on(reset, counter_handler),
@@ -127,18 +124,17 @@ class CounterEffects:
             ops.map(lambda _: load_count_success(42))
         )
 
-
-# 5. 建立 Store、註冊模組
+# 5. 建立 Store 與註冊模組
 store = create_store()
 store.apply_middleware(LoggerMiddleware)
 store.register_root({"counter": counter_reducer})
 store.register_effects(CounterEffects)
 
-# 6. 訂閱狀態與測試
+# 6. 使用 Selector 訂閱狀態
 get_counter_state = lambda state: state["counter"]
 get_count = create_selector(
     get_counter_state,
-    result_fn=lambda counter: counter.count or 0
+    result_fn=lambda counter: counter.get("count", 0)
 )
 store.select(get_count).subscribe(
     lambda c: print(f"Count: {c[1]}")
@@ -153,8 +149,14 @@ if __name__ == "__main__":
     store.dispatch(load_count_request())
     # 給 Effects 一些時間
     time.sleep(2)
-
 ```
+
+### 注意事項
+
+* 狀態管理已改為使用 `TypedDict` 和 `immutables.Map`，避免了 Pydantic 模型在頻繁狀態更新時的效能損耗。
+* 使用 `batch_update` 及 `immutables.Map` 的內建方法，以確保狀態更新的不可變性。
+* Pydantic 模型可視需求透過工具函數動態轉換使用，詳見範例原始碼。
+
 
 ---
 ## Examples
