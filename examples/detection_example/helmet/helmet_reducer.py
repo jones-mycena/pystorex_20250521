@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Dict, List
+from immutables import Map, MapMutation
+from typing import Dict, List, TypedDict
 from pystorex import create_reducer, on
+from pystorex.immutable_utils import to_immutable
 from shared.constants import (
     HELMET_STATUS,
     VIOLATION_THRESHOLD,
@@ -11,26 +12,35 @@ from shared.utils import generate_person_id
 from shared.detection_actions import visual_recognition
 
 # ========== Model Definitions ==========
-class PersonHelmetState(BaseModel):
-    """
-    定義每個人的安全帽狀態
-    """
-    status: str = HELMET_STATUS["NORMAL"]  # 當前狀態（NORMAL, WARNING, VIOLATION）
-    helmet_count: int = 0  # 正確佩戴安全帽的累計次數
-    no_helmet_count: int = 0  # 未佩戴安全帽的累計次數
-    no_person_count: int = 0  # 無人偵測的累計次數
-    last_position: List[float] = []  # 最後一次偵測到的位置
-    last_seen: int = 0  # 最後一次偵測到的幀數
+class PersonHelmetState(TypedDict):
+    status: str  # 當前狀態（NORMAL, WARNING, VIOLATION）
+    helmet_count: int  # 正確佩戴安全帽的累計次數
+    no_helmet_count: int  # 未佩戴安全帽的累計次數
+    no_person_count: int  # 無人偵測的累計次數
+    last_position: List[float]  # 最後一次偵測到的位置
+    last_seen: int  # 最後一次偵測到的幀數
 
-class InitialState(BaseModel):
-    """
-    定義初始狀態
-    """
-    helmet_states: Dict[str, PersonHelmetState] = {}  # 每個人的安全帽狀態
-    frameCount: int = 0  # 當前幀數
+class InitialState(TypedDict):
+    helmet_states: Dict[str, PersonHelmetState]  # 每個人的安全帽狀態
+    frameCount: int  # 當前幀數
+
+# 初始狀態值
+person_helmet_initial_state: PersonHelmetState = {
+    "status": HELMET_STATUS["NORMAL"],
+    "helmet_count": 0,
+    "no_helmet_count": 0,
+    "no_person_count": 0,
+    "last_position": [],
+    "last_seen": 0
+}
+
+initial_state: InitialState = {
+    "helmet_states": {},
+    "frameCount": 0
+}
 
 # ========== Utility Functions ==========
-def is_helmet_worn_correctly(person_bbox, helmet_bbox) -> bool:
+def is_helmet_worn_correctly(person_bbox: List[float], helmet_bbox: List[float]) -> bool:
     """
     判斷安全帽是否正確佩戴（通過檢測人頭部與安全帽的重疊）
     
@@ -58,83 +68,125 @@ def is_helmet_worn_correctly(person_bbox, helmet_bbox) -> bool:
     # 如果重疊面積超過頭部面積的 30%，認為安全帽佩戴正確
     return (overlap_area / head_area) > 0.3 if head_area > 0 else False
 
+# ========== Helper Functions ==========
+def update_person_helmet_state(
+    person_data: Map,
+    bbox: List[float],
+    helmets: List[List[float]],
+    frame_count: int
+) -> Map:
+    """
+    更新單個人的安全帽狀態
+    
+    Args:
+        person_data: 當前人員的狀態 (immutables.Map)
+        bbox: 人員邊界框
+        helmets: 所有安全帽邊界框
+        frame_count: 當前幀數
+        
+    Returns:
+        immutables.Map: 更新後的狀態
+    """
+    new_person_data = person_data.mutate()
+    new_person_data["last_position"] = bbox[:4]
+    new_person_data["last_seen"] = frame_count + 1
+    new_person_data["no_person_count"] = 0  # 重置，因為人員被檢測到
+
+    # 判斷是否正確佩戴安全帽
+    helmet_worn = any(is_helmet_worn_correctly(bbox, h) for h in helmets)
+    if helmet_worn:
+        new_person_data["no_helmet_count"] = 0
+        new_person_data["helmet_count"] = person_data["helmet_count"] + 1
+        if (
+            person_data["status"] == HELMET_STATUS["VIOLATION"]
+            and new_person_data["helmet_count"] >= NORMAL_THRESHOLD
+        ):
+            new_person_data["status"] = HELMET_STATUS["NORMAL"]
+            new_person_data["helmet_count"] = 0
+    else:
+        new_person_data["helmet_count"] = 0
+        new_person_data["no_helmet_count"] = person_data["no_helmet_count"] + 1
+        new_person_data["status"] = (
+            HELMET_STATUS["VIOLATION"]
+            if new_person_data["no_helmet_count"] >= VIOLATION_THRESHOLD
+            else HELMET_STATUS["WARNING"]
+        )
+
+    return new_person_data.finish()
+
+def update_no_person_count(
+    helmet_states: Map,
+    new_helmet_states: MapMutation,
+    detected_pids: set,
+    no_person_threshold: int
+) -> None:
+    """
+    更新未檢測到的人員的 no_person_count，並移除達到閾值的記錄
+    
+    Args:
+        helmet_states: 當前 helmet_states (immutables.Map)
+        new_helmet_states: helmet_states 的 mutation
+        detected_pids: 檢測到的 pid 集合
+        no_person_threshold: 移除閾值
+    """
+    for pid in helmet_states:
+        if pid not in detected_pids:
+            person_data = helmet_states[pid]
+            new_count = person_data["no_person_count"] + 1
+            if new_count >= no_person_threshold:
+                del new_helmet_states[pid]
+            else:
+                person_mutation = person_data.mutate()
+                person_mutation["no_person_count"] = new_count
+                new_helmet_states[pid] = person_mutation.finish()
+
 # ========== Handlers ==========
 def visual_recognition_handler(state: InitialState, action) -> InitialState:
     """
     處理 visual_recognition 動作，更新安全帽狀態
     
     Args:
-        state: 當前狀態
+        state: 當前狀態 (immutables.Map)
         action: 動作物件，包含偵測到的人員與安全帽資訊
         
     Returns:
-        InitialState: 更新後的狀態
+        InitialState: 更新後的狀態 (immutables.Map)
     """
-    if action.type != visual_recognition.type:
-        return state
 
-    # 深複製整個狀態物件
-    new_state: InitialState = state.model_copy()
-    helmet_states = dict(new_state.helmet_states)  # 拷貝子字典，避免修改原始資料
+    # 檢查輸入格式
     persons = action.payload.get("persons", [])
     helmets = action.payload.get("helmets", [])
+    # if not isinstance(persons, list) or not isinstance(helmets, list):
+    #     raise ValueError("action.payload must contain 'persons' and 'helmets' as lists")
 
-    # 無人場景：累計 no_person_count，達到閾值後刪除該人的狀態
-    if not persons:
-        for pid in list(helmet_states.keys()):
-            ps = helmet_states[pid]
-            ps.no_person_count += 1
-            if ps.no_person_count >= NO_PERSON_THRESHOLD:
-                del helmet_states[pid]
-        return new_state
+    helmet_states = state["helmet_states"]
+    frame_count = state["frameCount"]
 
-    # 有人場景：重置所有人的 no_person_count
-    for ps in helmet_states.values():
-        ps.no_person_count = 0
+    # 創建主狀態的 mutation
+    new_state = state.mutate()
+    new_helmet_states = helmet_states.mutate()
 
-    # 更新幀數
-    new_state.frameCount += 1
-
-    # 處理每個人
-    for bbox in persons:
-        pid = generate_person_id(bbox)
-        # 如果是新偵測到的人，初始化其狀態
-        if pid not in helmet_states:
-            helmet_states[pid] = PersonHelmetState(
-                last_position=bbox[:4],
-                last_seen=new_state.frameCount
+    # 處理檢測到的人員
+    detected_pids = set()
+    if persons:
+        new_state["frameCount"] = frame_count + 1
+        for bbox in persons:
+            pid = generate_person_id(bbox)
+            detected_pids.add(pid)
+            person_data = helmet_states.get(pid) or to_immutable(person_helmet_initial_state)
+            new_helmet_states[pid] = update_person_helmet_state(
+                person_data, bbox, helmets, frame_count
             )
 
-        ps = helmet_states[pid]
-        ps.last_position = bbox[:4]
-        ps.last_seen = new_state.frameCount
+    # 更新未檢測到的人員的 no_person_count（包括無人場景）
+    update_no_person_count(helmet_states, new_helmet_states, detected_pids, NO_PERSON_THRESHOLD)
 
-        # 判斷是否正確佩戴安全帽
-        helmet_worn = any(
-            is_helmet_worn_correctly(bbox, h) for h in helmets
-        )
-        if helmet_worn:
-            ps.no_helmet_count = 0
-            ps.helmet_count += 1
-            # 如果之前是 VIOLATION，且連續正常達到閾值，回到 NORMAL
-            if (
-                ps.status == HELMET_STATUS["VIOLATION"]
-                and ps.helmet_count >= NORMAL_THRESHOLD
-            ):
-                ps.status = HELMET_STATUS["NORMAL"]
-                ps.helmet_count = 0
-        else:
-            ps.helmet_count = 0
-            ps.no_helmet_count += 1
-            if ps.no_helmet_count >= VIOLATION_THRESHOLD:
-                ps.status = HELMET_STATUS["VIOLATION"]
-            else:
-                ps.status = HELMET_STATUS["WARNING"]
-
-    return new_state
+    # 完成修改
+    new_state["helmet_states"] = new_helmet_states.finish()
+    return new_state.finish()
 
 # ========== Reducer ==========
 helmet_status_reducer = create_reducer(
-    InitialState(),
+    to_immutable(initial_state),
     on(visual_recognition, visual_recognition_handler)
 )

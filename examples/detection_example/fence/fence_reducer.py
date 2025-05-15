@@ -1,8 +1,8 @@
-from immutables import Map
+from immutables import Map, MapMutation
 from pydantic import BaseModel
 from typing import Dict, List, Any, Tuple, TypedDict
 from pystorex import create_reducer, on
-from pystorex.immutable_utils import to_dict
+from pystorex.immutable_utils import to_dict, to_immutable
 from shared.constants import (
     FENCE_STATUS,
     FENCE_VIOLATION_THRESHOLD,
@@ -76,107 +76,90 @@ def is_in_restricted_area(person_bbox) -> Tuple[bool, int]:
     
     return False, -1  # 不在任何禁區內
 
+def update_person_state(
+    person_data: Map,
+    bbox: List[float],
+    in_restricted: bool,
+    area_idx: int,
+    frame_count: int
+) -> Map:
+    """更新單個人的狀態"""
+    new_person_data = person_data.mutate()
+    new_person_data["last_position"] = bbox[:4]
+    new_person_data["last_seen"] = frame_count + 1
+    new_person_data["no_person_count"] = 0  # 重置，因為人員被檢測到
 
+    if in_restricted:
+        new_person_data["intrusion_count"] = person_data["intrusion_count"] + 1
+        new_person_data["outside_count"] = 0
+        new_person_data["area_index"] = area_idx
+        new_person_data["status"] = (
+            FENCE_STATUS["INTRUSION"]
+            if new_person_data["intrusion_count"] >= FENCE_VIOLATION_THRESHOLD
+            else FENCE_STATUS["WARNING"]
+        )
+    else:
+        new_person_data["intrusion_count"] = 0
+        new_person_data["outside_count"] = person_data["outside_count"] + 1
+        new_person_data["area_index"] = -1
+        new_person_data["status"] = (
+            FENCE_STATUS["OUTSIDE"]
+            if new_person_data["outside_count"] >= NORMAL_THRESHOLD
+            else FENCE_STATUS["WARNING"]
+            if person_data["status"] == FENCE_STATUS["INTRUSION"]
+            else person_data["status"]
+        )
 
-# ============== Handlers ==============
-def visual_recognition_handler(state: InitialState, action) -> InitialState:
-    """
-    處理視覺識別結果的 reducer handler
-    使用單一 mutate-finish 周期優化性能
-    """
-    # 獲取當前狀態
-    persons = action.payload.get("persons", [])
-    fence_states = state["fence_states"]
-    frame_count = state['frameCount']
-    
-    # 創建主狀態的 evolver
-    new_state = state.mutate()
-    
-    # 創建 fence_states 的 evolver (只調用一次 mutate)
-    new_fence_states = fence_states.mutate()
-    
-    # ── 更新 frameCount (如果有人)
-    if persons:
-        new_state["frameCount"] = frame_count + 1
-    
-    # ── 無人場景
-    if not persons:
-        # 遍歷所有人的狀態
-        for pid, fdata in fence_states.items():
-            # 獲取當前的 no_person_count
-            current_count = fdata['no_person_count']
-            new_count = current_count + 1
-            
-            # 檢查是否達到閾值
-            if new_count >= NO_PERSON_THRESHOLD:
-                # 達到閾值就刪除
+    return new_person_data.finish()
+
+def update_no_person_count(
+    fence_states: Map,
+    new_fence_states: MapMutation,
+    detected_pids: set,
+    no_person_threshold: int
+) -> None:
+    """更新未檢測到的人員的 no_person_count，並移除達到閾值的記錄"""
+    for pid in fence_states:
+        if pid not in detected_pids:
+            person_data = fence_states[pid]
+            new_count = person_data["no_person_count"] + 1
+            if new_count >= no_person_threshold:
                 del new_fence_states[pid]
             else:
-                # 如果 fdata 是 Map，直接更新 evolver
-                fdata['no_person_count'] = new_count
-                new_fence_states[pid] = fdata
-    else:
-        # ── 有人場景
-        
-        # 重置所有人的 no_person_count
-        for pid in fence_states:
-            # 直接在 evolver 中設置 no_person_count 為 0
-            person_data = fence_states[pid]
-            person_data["no_person_count"] = 0
-            new_fence_states[pid] = person_data
-        
-        # 禁區檢測邏輯
+                person_mutation = person_data.mutate()
+                person_mutation["no_person_count"] = new_count
+                new_fence_states[pid] = person_mutation.finish()
+# ============== Handlers ==============
+def visual_recognition_handler(state: InitialState, action) -> InitialState:
+    """處理視覺識別結果的 reducer handler"""
+    persons = action.payload.get("persons", [])
+    fence_states = state["fence_states"]
+    frame_count = state["frameCount"]
+
+    # 創建主狀態的 mutation
+    new_state = state.mutate()
+    new_fence_states = fence_states.mutate()
+
+    new_state["frameCount"] = frame_count + 1
+    # 處理檢測到的人員
+    detected_pids = set()
+    if persons:
+        # new_state["frameCount"] = frame_count + 1
         for bbox in persons:
             pid = generate_person_id(bbox)
+            detected_pids.add(pid)
             in_restricted, area_idx = is_in_restricted_area(bbox)
-            
-            # 準備更新的人員數據
-            if pid in new_fence_states:
-                # 獲取現有數據
-                person_data = fence_states[pid]
-            else:
-                # 如果是新出現的人，使用預定義的初始狀態
-                person_data = dict(person_fence_initial_state)
-            
-            # 更新通用欄位
-            person_data["last_position"] = bbox[:4]
-            person_data["last_seen"] = frame_count + 1
-            
-            if in_restricted:
-                # 在禁區內：更新入侵計數和狀態
-                person_data["intrusion_count"] = person_data['intrusion_count'] + 1
-                person_data["outside_count"] = 0
-                person_data["area_index"] = area_idx
-                
-                # 根據入侵計數設置狀態
-                if person_data["intrusion_count"] >= FENCE_VIOLATION_THRESHOLD:
-                    person_data["status"] = FENCE_STATUS["INTRUSION"]
-                else:
-                    person_data["status"] = FENCE_STATUS["WARNING"]
-            else:
-                # 不在禁區：更新外部計數和狀態
-                person_data["intrusion_count"] = 0
-                
-                # 如果之前是入侵狀態，改為警告
-                if person_data.get("status") == FENCE_STATUS["INTRUSION"]:
-                    person_data["status"] = FENCE_STATUS["WARNING"]
-                
-                person_data["outside_count"] = person_data["outside_count"] + 1
-                
-                # 如果外部計數超過閾值，改為正常狀態
-                if person_data["outside_count"] >= NORMAL_THRESHOLD:
-                    person_data["status"] = FENCE_STATUS["OUTSIDE"]
-                    person_data["area_index"] = -1
-            
-            # 直接更新 evolver，不創建中間 Map
-            new_fence_states[pid] = person_data
-    
-    # 完成所有修改後，只調用一次 finish (先對 fence_states，再對 state)
-    new_state["fence_states"] = new_fence_states.finish()
-    
-    # 返回完成的新狀態 (只調用一次 state.finish())
-    return new_state.finish()
+            person_data = fence_states.get(pid) or to_immutable(person_fence_initial_state)
+            new_fence_states[pid] = update_person_state(
+                person_data, bbox, in_restricted, area_idx, frame_count
+            )
 
+    # 更新未檢測到的人員的 no_person_count（包括無人場景）
+    update_no_person_count(fence_states, new_fence_states, detected_pids, NO_PERSON_THRESHOLD)
+
+    # 完成修改
+    new_state["fence_states"] = new_fence_states.finish()
+    return new_state.finish()
 
 
 # ============== Reducer ==============
