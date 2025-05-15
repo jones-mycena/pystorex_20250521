@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pystorex"
-version = "0.1.8"
+version = "0.2.0"
 description = "A Python state management library inspired by NgRx"
 readme = "README.md"
 # Removed invalid property 'readme-content-type'
@@ -14,7 +14,7 @@ authors = [
 ]
 # PyPI 上的專案網址
 urls = { "homepage" = "https://github.com/JonesHong/pystorex.git" }
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
   "reactivex>=1.6",
-  "pydantic>=1.10",
+  "pydantic>=2.11.4",
   "immutables>=0.21"
 ]
 
