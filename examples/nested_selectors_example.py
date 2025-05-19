@@ -1,5 +1,10 @@
+import json
+from pathlib import Path
 import sys
-sys.path.append(r"c:\work\pystorex")
+
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import time
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel
@@ -71,33 +76,33 @@ workload_update = create_action("[Workload] Update", lambda level: level)
 # ====== 3. 定義 Reducers ======
 # Counter Reducer
 def counter_handler(state: CounterState, action: Action) -> CounterState:
-    new_state = state.copy(deep=True)
+    new_state_mutation = state.mutate()
     now = time.time()
 
     if action.type == increment.type:
-        new_state.count += 1
-        new_state.last_updated = now
+        new_state_mutation['count'] += 1
+        new_state_mutation['last_updated'] = now
     elif action.type == decrement.type:
-        new_state.count -= 1
-        new_state.last_updated = now
+        new_state_mutation['count'] -= 1
+        new_state_mutation['last_updated'] = now
     elif action.type == reset.type:
-        new_state.count = action.payload
-        new_state.last_updated = now
+        new_state_mutation['count'] = action.payload
+        new_state_mutation['last_updated'] = now
     elif action.type == increment_by.type:
-        new_state.count += action.payload
-        new_state.last_updated = now
+        new_state_mutation['count'] += action.payload
+        new_state_mutation['last_updated'] = now
     elif action.type == load_count_request.type:
-        new_state.loading = True
-        new_state.error = None
+        new_state_mutation['loading'] = True
+        new_state_mutation['error'] = None
     elif action.type == load_count_success.type:
-        new_state.loading = False
-        new_state.count = action.payload
-        new_state.last_updated = now
+        new_state_mutation['loading'] = False
+        new_state_mutation['count'] = action.payload
+        new_state_mutation['last_updated'] = now
     elif action.type == load_count_failure.type:
-        new_state.loading = False
-        new_state.error = action.payload
+        new_state_mutation['loading'] = False
+        new_state_mutation['error'] = action.payload
     
-    return new_state
+    return new_state_mutation.finish()
 
 counter_reducer = create_reducer(
     CounterState(),
@@ -112,29 +117,34 @@ counter_reducer = create_reducer(
 
 # Todos Reducer
 def todos_handler(state: TodosState, action: Action) -> TodosState:
-    new_state = state.copy(deep=True)
+    new_state_mutation  = state.mutate()
     
     if action.type == load_todos_request.type:
-        new_state.loading = True
-        new_state.error = None
+        new_state_mutation['loading'] = True
+        new_state_mutation['error'] = None
     elif action.type == load_todos_success.type:
-        new_state.loading = False
-        new_state.items = action.payload
+        new_state_mutation['loading'] = False
+        new_state_mutation['items'] = action.payload
     elif action.type == load_todos_failure.type:
-        new_state.loading = False
-        new_state.error = action.payload
+        new_state_mutation['loading'] = False
+        new_state_mutation.error = action.payload
     elif action.type == add_todo.type:
-        new_state.items.append(action.payload)
+        if isinstance(new_state_mutation['items'], tuple):
+            new_state_mutation['items'] = list(new_state_mutation['items'])
+        new_state_mutation['items'].append(action.payload)
     elif action.type == toggle_todo.type:
-        for item in new_state.items:
-            if item.id == action.payload:
-                item.completed = not item.completed
+        for item in new_state_mutation['items']:
+            item_mutation = item.mutate()
+            if item_mutation['id'] == action.payload:
+                item_mutation['completed'] = not item_mutation['completed']
+            
+            item = item_mutation.finish()
     elif action.type == remove_todo.type:
-        new_state.items = [item for item in new_state.items if item.id != action.payload]
+        new_state_mutation['items'] = [item for item in new_state_mutation['items'] if item['id'] != action.payload]
     elif action.type == set_todos_filter.type:
-        new_state.filter = action.payload
+        new_state_mutation['filter'] = action.payload
     
-    return new_state
+    return new_state_mutation.finish()
 
 todos_reducer = create_reducer(
     TodosState(),
@@ -149,19 +159,19 @@ todos_reducer = create_reducer(
 
 # User Reducer
 def user_handler(state: UserState, action: Action) -> UserState:
-    new_state = state.copy(deep=True)
+    new_state_mutation = state.mutate()
     
     if action.type == load_user_success.type:
-        new_state.id = action.payload.get("id")
-        new_state.name = action.payload.get("name")
-        new_state.preferences = action.payload.get("preferences", {})
+        new_state_mutation['id'] = action.payload.get("id")
+        new_state_mutation['name'] = action.payload.get("name")
+        new_state_mutation['preferences'] = action.payload.get("preferences", {})
     elif action.type == update_user_preference.type:
         key = action.payload.get("key")
         value = action.payload.get("value")
         if key:
-            new_state.preferences[key] = value
+            new_state_mutation['preferences'][key] = value
     
-    return new_state
+    return new_state_mutation.finish()
 
 user_reducer = create_reducer(
     UserState(),
@@ -260,52 +270,51 @@ get_user_state = lambda state: state["user"]
 # Counter 衍生選擇器
 get_count = create_selector(
     get_counter_state,
-    result_fn=lambda counter: counter.count
+    result_fn=lambda counter: counter['count']
 )
 
 get_counter_loading = create_selector(
     get_counter_state,
-    result_fn=lambda counter: counter.loading
+    result_fn=lambda counter: counter['loading']
 )
 
 # Todos 衍生選擇器
 get_todos = create_selector(
     get_todos_state,
-    result_fn=lambda todos_state: todos_state.items
+    result_fn=lambda todos_state: tuple(todo for todo in todos_state['items'])
 )
 
 get_todos_filter = create_selector(
     get_todos_state,
-    result_fn=lambda todos_state: todos_state.filter
+    result_fn=lambda todos_state: todos_state['filter']
 )
 
 get_todos_loading = create_selector(
     get_todos_state,
-    result_fn=lambda todos_state: todos_state.loading
+    result_fn=lambda todos_state: todos_state['loading']
 )
 
 # User 衍生選擇器
 get_user_name = create_selector(
     get_user_state,
-    result_fn=lambda user: user.name
+    result_fn=lambda user: user['name']
 )
 
 get_user_preferences = create_selector(
     get_user_state,
-    result_fn=lambda user: user.preferences
+    result_fn=lambda user: user['preferences'].get('theme', 'default')  # 返回 str
 )
 
 # 複合選擇器 - 這裡展示 selector 包 selector
 get_filtered_todos = create_selector(
     get_todos,
-    get_todos_filter,
-    result_fn=lambda todos, filter_type: [
-        todo for todo in todos if (
-            filter_type == "all" or
-            (filter_type == "active" and not todo.completed) or
-            (filter_type == "completed" and todo.completed)
-        )
-    ]
+    get_todos_state,
+    result_fn=lambda todos, todos_state: tuple(
+        todo for todo in todos
+        if (todos_state['filter'] == "all" or
+            (todos_state['filter'] == "active" and not todo['completed']) or
+            (todos_state['filter'] == "completed" and todo['completed']))
+    )
 )
 
 get_filtered_todos_count = create_selector(
@@ -315,12 +324,12 @@ get_filtered_todos_count = create_selector(
 
 get_high_priority_todos = create_selector(
     get_todos,
-    result_fn=lambda todos: [todo for todo in todos if todo.priority == 3]
+    result_fn=lambda todos: tuple(todo for todo in todos if todo['priority'] == 3)
 )
 
 get_completed_todos_count = create_selector(
     get_todos,
-    result_fn=lambda todos: sum(1 for todo in todos if todo.completed)
+    result_fn=lambda todos: sum(1 for todo in todos if todo['completed'])
 )
 
 # 高級複合選擇器 - 組合多個功能領域的選擇器
@@ -330,15 +339,15 @@ get_user_todo_stats = create_selector(
     get_filtered_todos_count,
     get_completed_todos_count,
     get_high_priority_todos,
-    get_count,  # 從 counter 模組中獲取數據
+    get_count,
     result_fn=lambda user_name, all_todos, filtered_count, completed_count, high_priority_todos, counter: {
-        "user_name": user_name,
-        "total_todos": len(all_todos),
-        "filtered_count": filtered_count,
-        "completed_count": completed_count,
-        "high_priority_count": len(high_priority_todos),
-        "completion_percentage": round((completed_count / len(all_todos)) * 100) if all_todos else 0,
-        "counter_value": counter
+        "user_name": user_name,  # str
+        "total_todos": len(all_todos),  # int
+        "filtered_count": filtered_count,  # int
+        "completed_count": completed_count,  # int
+        "high_priority_count": len(high_priority_todos),  # int
+        "completion_percentage": round((completed_count / len(all_todos)) * 100) if all_todos else 0,  # int
+        "counter_value": counter  # int
     }
 )
 
@@ -387,12 +396,12 @@ def load_all_data():
         print("Thunk: 開始載入所有數據")
         # 首先檢查數據是否已經載入
         state = get_state()
-        todos_loading = state["todos"].loading
-        user_id = state["user"].id
+        todos_loading = state["todos"]['loading']
+        user_id = state["user"]['id']
         
         dispatch(load_user_request())
         
-        if not todos_loading and not state["todos"].items:
+        if not todos_loading and not state["todos"]['items']:
             dispatch(load_todos_request())
             
         dispatch(load_count_request())
@@ -406,11 +415,11 @@ def complete_all_todos():
     def thunk(dispatch, get_state):
         print("Thunk: 完成所有待辦事項")
         state = get_state()
-        todos = state["todos"].items
+        todos = state["todos"]['items']
         
         for todo in todos:
-            if not todo.completed:
-                dispatch(toggle_todo(todo.id))
+            if not todo['completed']:
+                dispatch(toggle_todo(todo['id']))
                 
         return {"status": "success", "completed": len(todos)}
     

@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 import sys
 
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel
@@ -16,12 +18,14 @@ from pystorex.rx_operators import ofType
 from pystorex.actions import create_action, Action, update_reducer
 from pystorex import create_store, create_reducer, on, create_effect
 from pystorex.store_selectors import create_selector
-from pystorex.middleware import LoggerMiddleware
+from pystorex.middleware import LoggerMiddleware, PerformanceMonitorMiddleware
 
 # 導入新的工具函數
 from pystorex.immutable_utils import to_dict, to_pydantic, to_immutable
 from pystorex.map_utils import batch_update, update_in
 
+from pystorex.reducers import create_reducer_from_function_handler
+from pystorex.action_handlers import TypedActionHandler
 
 # ====== 1. 定義狀態模型 ======
 # class CounterStateModel(BaseModel):
@@ -32,13 +36,16 @@ from pystorex.map_utils import batch_update, update_in
 
 class CounterState(TypedDict):
     count: int
-    loading: bool
+    loading: Optional[bool]  # 修改為 Optional[bool] 而不是 bool
     error: Optional[str]
     last_updated: Optional[float]
+    history: Tuple[int, ...]  # 使用 Tuple 而不是 List
+    max_value: int      # 新增
+    min_value: int      # 新增
 
 
 counter_initial_state = CounterState(
-    count=0, loading=False,  error=None, last_updated=None
+    count=0, loading=False,  error=None, last_updated=None,history=(), max_value=100, min_value=0
 )
 # ====== 2. 定義 Actions ======
 increment = create_action("increment")
@@ -55,55 +62,127 @@ count_warning = create_action("countWarning", lambda count: count)
 
 
 # ====== 3. 定義 Reducer ======
-def counter_handler(state: CounterState, action: Action) -> CounterState:  # type: ignore
-    """
-    處理計數器相關 action，接收 Map 狀態並返回新的 Map 狀態
-    注意: 不再返回 Pydantic 模型，而是直接操作 Map
-    """
+# def counter_handler(state: CounterState, action: Action) -> CounterState:  # type: ignore
+#     """
+#     處理計數器相關 action，接收 Map 狀態並返回新的 Map 狀態
+#     注意: 不再返回 Pydantic 模型，而是直接操作 Map
+#     """
 
-    now = time.time()
-    print(f"counter_handler:")
-    print(f"get_action: {action.type} & {action.payload}")
-    print(f"state: {state['count']} & {state.get('last_updated')}")
-    if action.type == increment.type:
-        # 使用 Map.set() 或 batch_update() 創建新的 Map
-        new_state = state.set("count",state["count"] + 1)
-        new_state = new_state.set("last_updated",now)
-        return new_state
-        # return batch_update(state, {"count": state["count"] + 1, "last_updated": now})
-    elif action.type == decrement.type:
-        return batch_update(state, {"count": state["count"] - 1, "last_updated": now})
-    elif action.type == reset.type:
-        return batch_update(state, {"count": action.payload, "last_updated": now})
-    elif action.type == increment_by.type:
-        return batch_update(
-            state, {"count": state["count"] + action.payload, "last_updated": now}
-        )
-    elif action.type == load_count_request.type:
-        return batch_update(state, {"loading": True, "error": None})
-    elif action.type == load_count_success.type:
-        return batch_update(
-            state, {"loading": False, "count": action.payload, "last_updated": now}
-        )
-    elif action.type == load_count_failure.type:
-        return batch_update(state, {"loading": False, "error": action.payload})
-    return state
+#     now = time.time()
+#     print(f"counter_handler:")
+#     print(f"get_action: {action.type} & {action.payload}")
+#     print(f"state: {state['count']} & {state.get('last_updated')}")
+#     if action.type == increment.type:
+#         # 使用 Map.set() 或 batch_update() 創建新的 Map
+#         new_state = state.set("count",state["count"] + 1)
+#         new_state = new_state.set("last_updated",now)
+#         return new_state
+#         # return batch_update(state, {"count": state["count"] + 1, "last_updated": now})
+#     elif action.type == decrement.type:
+#         return batch_update(state, {"count": state["count"] - 1, "last_updated": now})
+#     elif action.type == reset.type:
+#         return batch_update(state, {"count": action.payload, "last_updated": now})
+#     elif action.type == increment_by.type:
+#         return batch_update(
+#             state, {"count": state["count"] + action.payload, "last_updated": now}
+#         )
+#     elif action.type == load_count_request.type:
+#         return batch_update(state, {"loading": True, "error": None})
+#     elif action.type == load_count_success.type:
+#         return batch_update(
+#             state, {"loading": False, "count": action.payload, "last_updated": now}
+#         )
+#     elif action.type == load_count_failure.type:
+#         return batch_update(state, {"loading": False, "error": action.payload})
+#     return state
 
 
 # 創建 reducer，允許傳入 Pydantic 模型作為初始狀態
 # 庫內部會自動轉換為 Map
-counter_reducer = create_reducer(
-    # CounterStateModel(),  # Pydantic 模型作為初始狀態
-    counter_initial_state,
-    on(increment, counter_handler),
-    on(decrement, counter_handler),
-    on(reset, counter_handler),
-    on(increment_by, counter_handler),
-    on(load_count_request, counter_handler),
-    on(load_count_success, counter_handler),
-    on(load_count_failure, counter_handler),
+# counter_reducer = create_reducer(
+#     # CounterStateModel(),  # Pydantic 模型作為初始狀態
+#     counter_initial_state,
+#     on(increment, counter_handler),
+#     on(decrement, counter_handler),
+#     on(reset, counter_handler),
+#     on(increment_by, counter_handler),
+#     on(load_count_request, counter_handler),
+#     on(load_count_success, counter_handler),
+#     on(load_count_failure, counter_handler),
+# )
+
+# 創建 TypedActionHandler
+handler = TypedActionHandler(
+    CounterState,
+    initial_values={
+        "count": 0,
+        "last_updated": None,
+        "history": [],
+        "max_value": 100,
+        "min_value": 0
+    }
 )
 
+# 註冊處理函數，現在 IDE 可以提供字段自動完成和類型檢查
+@handler.register("increment")
+def handle_increment(state, action):
+    new_count = state["count"] + 1
+    # 將 [new_count] 改為 (new_count,)
+    return (state
+            .set("count", new_count)
+            .set("last_updated", time.time())
+            .set("history", state["history"] + (new_count,)))  # 使用元組而不是列表
+
+@handler.register("decrement")
+def handle_decrement(state, action):
+    new_count = max(state["min_value"], state["count"] - 1)
+    return (state
+            .set("count", new_count)
+            .set("last_updated", time.time())
+            .set("history", state["history"] + (new_count,)))  # 使用元組而不是列表
+
+@handler.register("reset")
+def handle_reset(state, action):
+    new_count = action.payload
+    return (state
+            .set("count", new_count)
+            .set("last_updated", time.time())
+            .set("history", state["history"] + (new_count,)))  # 使用元組而不是列表
+# 為 "incrementBy" 註冊處理函數
+@handler.register("incrementBy")
+def handle_increment_by(state, action):
+    new_count = min(state["max_value"], state["count"] + action.payload)
+    return (state
+            .set("count", new_count)
+            .set("last_updated", time.time())
+            .set("history", state["history"] + (new_count,)))
+
+# 為 "loadCountRequest" 註冊處理函數
+@handler.register("loadCountRequest")
+def handle_load_count_request(state, action):
+    return (state
+            .set("loading", True)
+            .set("error", None))
+
+# 為 "loadCountSuccess" 註冊處理函數
+@handler.register("loadCountSuccess")
+def handle_load_count_success(state, action):
+    new_count = action.payload
+    return (state
+            .set("loading", False)
+            .set("count", new_count)
+            .set("last_updated", time.time())
+            .set("history", state["history"] + (new_count,)))
+
+# 為 "loadCountFailure" 註冊處理函數
+@handler.register("loadCountFailure")
+def handle_load_count_failure(state, action):
+    return (state
+            .set("loading", False)
+            .set("error", action.payload))
+
+# 創建 reducer
+counter_reducer = create_reducer_from_function_handler(handler)
 
 # ====== 4. 定義 Effects ======
 class CounterEffects:
@@ -143,6 +222,7 @@ class CounterEffects:
 # ====== 5. 建立 Store、註冊模組 ======
 store = create_store()
 store.apply_middleware(LoggerMiddleware)
+store.apply_middleware(PerformanceMonitorMiddleware(log_all=True))
 store.register_root({"counter": counter_reducer})
 store.register_effects(CounterEffects)
 
