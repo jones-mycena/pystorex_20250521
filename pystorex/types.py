@@ -117,7 +117,12 @@ class Store(Generic[S]):
 NextDispatch = Callable[[Action[Any]], Any]
 MiddlewareFunction = Callable[[NextDispatch], DispatchFunction]
 MiddlewareFactory = Callable[[Store[Any]], MiddlewareFunction]
-
+class ActionContext(TypedDict):
+    action: Any
+    prev_state: Any
+    next_state: Optional[Any]
+    result: Optional[Any]
+    error: Optional[Exception]
 @runtime_checkable
 class Middleware(Protocol):
     """中介軟體接口協議。"""

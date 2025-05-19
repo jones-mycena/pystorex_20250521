@@ -1,12 +1,6 @@
-"""
-基於 PyStoreX 的選擇器定義模組。
-
-此模組提供創建具有記憶功能的選擇器，可以從 Store 狀態中高效地選擇資料。
-選擇器會記住上次的計算結果，只有當輸入變化時才重新計算，避免不必要的性能損耗。
-"""
-
 import time
 import copy
+import functools
 from typing import Callable, Any, List, Optional, Tuple, cast, overload
 from .types import (
     Input, Output, R, StateSelector, ResultSelector, 
@@ -14,61 +8,28 @@ from .types import (
 )
 
 @overload
-def create_selector(selector: StateSelector[Input, Output], *, deep: bool = False, ttl: Optional[float] = None) -> StateSelector[Input, Output]:
+def create_selector(selector: StateSelector[Input, Output], *, deep: bool = False, ttl: Optional[float] = None, maxsize: int = 128) -> StateSelector[Input, Output]:
     """單一選擇器重載"""
     ...
 
 @overload
-def create_selector(*selectors: StateSelector[Input, Any], result_fn: ResultSelector[R], deep: bool = False, ttl: Optional[float] = None) -> StateSelector[Input, R]:
+def create_selector(*selectors: StateSelector[Input, Any], result_fn: ResultSelector[R], deep: bool = False, ttl: Optional[float] = None, maxsize: int = 128) -> StateSelector[Input, R]:
     """組合多個選擇器重載"""
     ...
 
-def create_selector(*selectors: Callable[[Any], Any], result_fn: Optional[Callable[..., Any]] = None, deep: bool = False, ttl: Optional[float] = None) -> MemoizedSelector:
+def create_selector(*selectors: Callable[[Any], Any], result_fn: Optional[Callable[..., Any]] = None, deep: bool = False, ttl: Optional[float] = None, maxsize: int = 128) -> MemoizedSelector:
     """
-    創建一個複合選擇器，支援 shallow/deep 比較與 TTL 快取控制
+    創建一個複合選擇器，支援記憶化、深淺比較與TTL控制
 
     Args:
         *selectors: 多個輸入選擇器，這些函數會從 state 中提取對應的值
         result_fn: 處理輸出結果的函數，將多個選擇器的輸出進行處理
-        deep: 是否進行深度比較（預設為 False），深度比較會檢查值的內容是否相等
+        deep: 是否進行深度比較（預設為 False）
         ttl: 快取有效時間（秒），若超過此時間則重新計算，預設為無限
+        maxsize: 緩存的最大條目數，預設為128
 
     Returns:
         經過快取優化的 selector 函數
-        
-    範例:
-        ```python
-        # 簡單選擇器，從狀態中選擇計數器值
-        get_counter = lambda state: state["counter"]
-        
-        # 衍生選擇器，計算計數器的平方
-        get_counter_squared = create_selector(
-            get_counter,
-            result_fn=lambda counter: counter ** 2
-        )
-        
-        # 組合多個選擇器
-        get_user = lambda state: state["user"]
-        get_items = lambda state: state["items"]
-        
-        # 計算用戶權限內的項目
-        get_allowed_items = create_selector(
-            get_user,
-            get_items,
-            result_fn=lambda user, items: [
-                item for item in items 
-                if user["role"] in item["allowed_roles"]
-            ]
-        )
-        
-        # 使用深度比較和快取超時
-        expensive_selector = create_selector(
-            get_complex_data,
-            result_fn=lambda data: perform_expensive_calculation(data),
-            deep=True,  # 對象內容變化時重新計算
-            ttl=300  # 最多 5 分鐘快取
-        )
-        ```
     """
     # 如果沒有 result_fn 且只有一個選擇器，直接返回該選擇器
     if not result_fn and len(selectors) == 1:
@@ -77,12 +38,11 @@ def create_selector(*selectors: Callable[[Any], Any], result_fn: Optional[Callab
     # 如果沒有提供 result_fn，預設為返回所有輸入值的函數
     if not result_fn:
         result_fn = lambda *args: args
-
-    # 初始化快取相關變數
-    last_inputs: Any = None  # 上一次的輸入值
-    last_output: Any = None  # 上一次的輸出結果
-    last_time: Optional[float] = None    # 上一次計算的時間
-
+    
+    # 使用簡單的緩存列表
+    cache = []
+    last_result = None
+    
     def selector(state: Any) -> Any:
         """
         經過快取優化的選擇器函數
@@ -93,41 +53,104 @@ def create_selector(*selectors: Callable[[Any], Any], result_fn: Optional[Callab
         Returns:
             計算結果，可能來自快取或重新計算
         """
-        nonlocal last_inputs, last_output, last_time
-
-        # 處理 state 為 (old, new) 的元組情況，僅使用新狀態
-        if isinstance(state, tuple) and len(state) == 2:
-            _, new_state = state
-        else:
-            new_state = state
-
-        # 執行所有選擇器，提取輸入值
-        inputs = tuple(select(new_state) for select in selectors)
-
-        # 時間控制：檢查快取是否過期
-        now = time.time()
-        expired = (ttl is not None and last_time is not None and (now - last_time) > ttl)
-
-        # 比較輸入值是否與上次相同
-        if not expired and last_inputs is not None:
-            if deep:
-                # 深度比較：檢查值的內容是否相等
-                same = inputs == last_inputs
+        nonlocal cache, last_result
+        
+        try:
+            # 處理 state 為 (old, new) 的元組情況，僅使用新狀態
+            if isinstance(state, tuple) and len(state) == 2:
+                _, new_state = state
             else:
-                # 淺層比較：檢查是否為同一物件
-                same = all(i is j for i, j in zip(inputs, last_inputs))
-            if same:
-                # 如果輸入值相同且未過期，直接返回快取的輸出結果
-                return last_output
+                new_state = state
 
-        # 執行計算
-        # 如果是深度比較，複製輸入值以避免修改原始資料
-        computed_inputs = copy.deepcopy(inputs) if deep else inputs
-        # 使用 result_fn 計算輸出結果
-        last_output = result_fn(*computed_inputs)
-        # 更新快取
-        last_inputs = copy.deepcopy(inputs) if deep else inputs
-        last_time = now
-        return last_output
-
+            # 執行所有選擇器，提取輸入值
+            try:
+                inputs = []
+                for select in selectors:
+                    try:
+                        result = select(new_state)
+                        inputs.append(result)
+                    except Exception as e:
+                        print(f"選擇器輸入錯誤: {e}")
+                        inputs.append(None)
+                inputs = tuple(inputs)
+            except Exception as e:
+                print(f"選擇器輸入處理錯誤: {e}")
+                return last_result if last_result is not None else None
+            
+            now = time.time()
+            
+            # 管理緩存
+            if ttl is not None:
+                # 清除過期項
+                cache = [item for item in cache if now - item[0] <= ttl]
+            
+            # 維護緩存大小
+            while len(cache) >= maxsize:
+                cache.pop(0)
+            
+            # 尋找緩存匹配
+            for timestamp, cached_inputs, cached_result in cache:
+                matched = False
+                try:
+                    if deep:
+                        # 嘗試深度比較,使用安全的方法
+                        matched = _safe_deep_equals(inputs, cached_inputs)
+                    else:
+                        # 標準淺比較
+                        matched = all(a is b for a, b in zip(inputs, cached_inputs))
+                except Exception:
+                    matched = False
+                
+                if matched:
+                    return cached_result
+            
+            # 緩存未命中，計算新結果
+            try:
+                result = result_fn(*inputs)
+                cache.append((now, inputs, result))
+                last_result = result
+                return result
+            except Exception as e:
+                print(f"選擇器計算錯誤: {e}")
+                return last_result if last_result is not None else None
+                
+        except Exception as e:
+            print(f"選擇器執行總體錯誤: {e}")
+            return last_result if last_result is not None else None
+    
+    # 添加緩存管理方法
+    def cache_info():
+        return (0, 0, maxsize, len(cache))
+    
+    def cache_clear():
+        nonlocal cache
+        cache.clear()
+    
+    selector.cache_info = cache_info  # type: ignore
+    selector.cache_clear = cache_clear  # type: ignore
+    
     return selector
+
+def _safe_deep_equals(a: Any, b: Any) -> bool:
+    """安全的深度比較，出錯時返回False"""
+    try:
+        if a is b:
+            return True
+        if type(a) != type(b):
+            return False
+        if isinstance(a, (str, int, float, bool, type(None))):
+            return a == b
+        if isinstance(a, dict):
+            if len(a) != len(b):
+                return False
+            for key in a:
+                if key not in b or not _safe_deep_equals(a[key], b[key]):
+                    return False
+            return True
+        if isinstance(a, (list, tuple)):
+            if len(a) != len(b):
+                return False
+            return all(_safe_deep_equals(x, y) for x, y in zip(a, b))
+        return a == b
+    except Exception:
+        return False

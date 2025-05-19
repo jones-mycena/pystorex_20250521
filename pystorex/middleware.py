@@ -5,22 +5,26 @@
 實現日誌記錄、錯誤處理、性能監控等功能。
 """
 
+import contextlib
 import datetime
 import threading
 import asyncio
 import json
 import time
 import traceback
-from types import MappingProxyType
-from copy import deepcopy
 from typing import (
-    Any, Callable, Dict, List, Optional, Tuple, Union, cast
+    Any, Callable, Dict, Generator, List, Optional, Tuple, Union, cast
 )
+import uuid
+
+from immutables import Map
+
+from .immutable_utils import to_dict
 
 from .errors import ActionError, PyStoreXError, global_error_handler
 from .actions import create_action, Action
 from .types import (
-    NextDispatch, MiddlewareFactory, MiddlewareFunction, DispatchFunction, 
+    ActionContext, NextDispatch, MiddlewareFactory, MiddlewareFunction, DispatchFunction, 
     Store, ThunkFunction, GetState, Middleware as MiddlewareProtocol
 )
 
@@ -33,7 +37,8 @@ class BaseMiddleware:
     中介軟體可以介入動作分發的流程，在動作到達 Reducer 前、
     動作處理完成後或出現錯誤時執行自定義邏輯。
     """
-    def on_next(self, action: Action[Any], prev_state: Any) -> None:
+    
+    def on_next(self, action: Any, prev_state: Any) -> None:
         """
         在 action 發送給 reducer 之前調用。
 
@@ -43,7 +48,7 @@ class BaseMiddleware:
         """
         pass
 
-    def on_complete(self, next_state: Any, action: Action[Any]) -> None:
+    def on_complete(self, next_state: Any, action: Any) -> None:
         """
         在 reducer 和 effects 處理完 action 之後調用。
 
@@ -53,7 +58,7 @@ class BaseMiddleware:
         """
         pass
 
-    def on_error(self, error: Exception, action: Action[Any]) -> None:
+    def on_error(self, error: Exception, action: Any) -> None:
         """
         如果 dispatch 過程中拋出異常，則調用此鉤子。
 
@@ -62,11 +67,56 @@ class BaseMiddleware:
             action: 導致異常的 Action
         """
         pass
+    
     def teardown(self) -> None:
         """
-        當 Store 清理資源時調用，用於清理中介軟體持有的資源。
+        當 Store 清理資源時調用，用於清理中間件持有的資源。
         """
         pass
+    
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        """
+        提供一個上下文管理器來處理 action 分發的生命週期。
+        
+        這個方法使用現有的 on_next、on_complete 和 on_error 鉤子，
+        但以更優雅的上下文管理器形式提供。
+        
+        子類可以覆蓋此方法，但應負責呼叫適當的 hook 方法，
+        或使用 super().action_context() 來確保 hook 被呼叫。
+        
+        Args:
+            action: 要分發的 Action
+            prev_state: 分發前的狀態
+            
+        Yields:
+            Dict[str, Any]: 包含上下文數據的字典，可用於在上下文內部與外部之間傳遞數據
+        """
+        # 初始化上下文數據
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None
+        }
+        
+        # 前置處理
+        self.on_next(action, prev_state)
+        
+        try:
+            # 讓出控制權，讓實際的 dispatch 發生
+            yield context
+            
+            # 如果上下文中已經設置了 next_state，使用它調用 on_complete
+            if 'next_state' in context and context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+                
+        except Exception as err:
+            # 錯誤處理
+            context['error'] = err
+            self.on_error(err, action)
+            raise
 
 
 # ———— LoggerMiddleware ————
@@ -78,6 +128,32 @@ class LoggerMiddleware(BaseMiddleware, MiddlewareProtocol):
     - 偵錯時需要觀察每次 state 的變化。
     - 確保 action 的執行順序正確。
     """
+    def __init__(self):
+        self._current_context = None  # 用於臨時存儲 context
+        
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'timestamp': datetime.datetime.now()  # 添加時間戳
+        }
+        self._current_context = context  # 存儲 context
+        self.on_next(action, prev_state)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            raise
+        finally:
+            self._current_context = None  # 清理 context    
+        
     def on_next(self, action: Action[Any], prev_state: Any) -> None:
         """
         在 action 發送給 reducer 之前打印日誌。
@@ -86,8 +162,12 @@ class LoggerMiddleware(BaseMiddleware, MiddlewareProtocol):
             action: 正在 dispatch 的 Action
             prev_state: dispatch 之前的 store.state
         """
-        print(f"▶️ dispatching {action.type}")
-        print(f"🔄 state before {action.type}: {prev_state}")
+        if self._current_context:
+            print(f"[{self._current_context['timestamp']}] ▶️ dispatching {action.type}")
+            print(f"[{self._current_context['timestamp']}] 🔄 state before {action.type}: {prev_state}")
+        else:
+            print(f"▶️ dispatching {action.type}")
+            print(f"🔄 state before {action.type}: {prev_state}")
 
     def on_complete(self, next_state: Any, action: Action[Any]) -> None:
         """
@@ -97,7 +177,10 @@ class LoggerMiddleware(BaseMiddleware, MiddlewareProtocol):
             next_state: dispatch 之後的最新 store.state
             action: 剛剛 dispatch 的 Action
         """
-        print(f"✅ state after {action.type}: {next_state}")
+        if self._current_context:
+            print(f"[{self._current_context['timestamp']}] ✅ state after {action.type}: {next_state}")
+        else:
+            print(f"✅ state after {action.type}: {next_state}")
 
     def on_error(self, error: Exception, action: Action[Any]) -> None:
         """
@@ -108,6 +191,8 @@ class LoggerMiddleware(BaseMiddleware, MiddlewareProtocol):
             action: 導致異常的 Action
         """
         print(f"❌ error in {action.type}: {error}")
+        
+        
 
 
 # ———— ThunkMiddleware ————
@@ -201,6 +286,7 @@ class AwaitableMiddleware(BaseMiddleware, MiddlewareProtocol):
                 return next_dispatch(action)
             return dispatch
         return middleware
+    
 
 
 # ———— ErrorMiddleware ————
@@ -213,6 +299,10 @@ class ErrorMiddleware(BaseMiddleware, MiddlewareProtocol):
     使用場景:
     - 當需要統一處理所有異常並記錄或上報時。
     """
+    def __init__(self):
+        self._current_context = None
+        self.store = None  # 假設 store 在某處設置
+    
     def __call__(self, store: Store[Any]) -> MiddlewareFunction:
         """
         配置 Error 中介軟體。
@@ -223,57 +313,45 @@ class ErrorMiddleware(BaseMiddleware, MiddlewareProtocol):
         Returns:
             配置函數，接收 next_dispatch 並返回新的 dispatch 函數
         """
+        self.store = store
         def middleware(next_dispatch: NextDispatch) -> DispatchFunction:
-            def dispatch(action: Action[Any]) -> Any:
-                try:
-                    return next_dispatch(action)
-                except Exception as err:
-                    store.dispatch(global_error({
-                        "error": str(err),
-                        "action": action.type
-                    }))
-                    raise
-            return dispatch
+                def dispatch(action: Action[Any]) -> Any:
+                    with self.action_context(action, store.state) as context:
+                        return next_dispatch(action)
+                return dispatch
         return middleware
 
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'error_timestamp': time.time()
+        }
+        self._current_context = context
+        self.on_next(action, prev_state)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            raise
+        finally:
+            self._current_context = None
 
-# ———— ImmutableEnforceMiddleware ————
-def _deep_freeze(obj: Any) -> Any:
-    """
-    遞歸地將 dict 轉為 MappingProxyType，將 list 轉為 tuple，防止誤修改。
-    
-    Args:
-        obj: 要凍結的對象
-        
-    Returns:
-        凍結後的對象
-    """
-    if isinstance(obj, dict):
-        return MappingProxyType({k: _deep_freeze(v) for k, v in obj.items()})
-    if isinstance(obj, list):
-        return tuple(_deep_freeze(v) for v in obj)
-    if isinstance(obj, tuple):
-        return tuple(_deep_freeze(v) for v in obj)
-    return obj
+    def on_error(self, error: Exception, action: Action[Any]) -> None:
+        error_info = {
+            "error": str(error),
+            "action": action.type,
+            "timestamp": self._current_context['error_timestamp'] if self._current_context else time.time()
+        }
+        self.store.dispatch(global_error(error_info))
 
-class ImmutableEnforceMiddleware(BaseMiddleware, MiddlewareProtocol):
-    """
-    在 on_complete 時深度凍結 next_state。若需要替換 store.state，可在此處調用 store._state = frozen。
-
-    使用場景:
-    - 當需要確保 state 不被意外修改時。
-    """
-    def on_complete(self, next_state: Any, action: Action[Any]) -> None:
-        """
-        在 reducer 和 effects 處理完 action 之後，凍結狀態。
-        
-        Args:
-            next_state: dispatch 之後的最新 store.state
-            action: 剛剛 dispatch 的 Action
-        """
-        frozen = _deep_freeze(next_state)
-        # TODO: 若框架支援，可替換實際 state：
-        # store._state = frozen
 
 
 # ———— PersistMiddleware ————
@@ -294,25 +372,43 @@ class PersistMiddleware(BaseMiddleware, MiddlewareProtocol):
         """
         self.filepath = filepath
         self.keys = keys
+        self._current_context = None
+        
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'persist_timestamp': time.time()
+        }
+        self._current_context = context
+        self.on_next(action, prev_state)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            raise
+        finally:
+            self._current_context = None
 
     def on_complete(self, next_state: Dict[str, Any], action: Action[Any]) -> None:
-        """
-        在 reducer 和 effects 處理完 action 之後，持久化狀態。
-        
-        Args:
-            next_state: dispatch 之後的最新 store.state
-            action: 剛剛 dispatch 的 Action
-        """
-        data = {
-            k: next_state.get(k)
-            for k in self.keys
-            if k in next_state
-        }
+        new_state_dict = to_dict(next_state)
+        data = {k: new_state_dict.get(k) for k in self.keys if k in new_state_dict}
         try:
             with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, default=lambda o: o.dict() if hasattr(o, "dict") else o)
+                json.dump(data, f, default=lambda o: 
+                    o.dict() if hasattr(o, "dict") else
+                    dict(o) if isinstance(o, Map) else o)
         except Exception as err:
-            print(f"[PersistMiddleware] 寫入失敗: {err}")
+            timestamp = self._current_context['persist_timestamp'] if self._current_context else time.time()
+            print(f"[PersistMiddleware] Write failed at {timestamp}: {err}")
+    
 
 
 # ———— DevToolsMiddleware ————
@@ -326,27 +422,39 @@ class DevToolsMiddleware(BaseMiddleware, MiddlewareProtocol):
     def __init__(self) -> None:
         """初始化 DevToolsMiddleware。"""
         self.history: List[Tuple[Any, Action[Any], Any]] = []
-        self._prev_state: Any = None
+        self._current_context = None
+
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None
+        }
+        self._current_context = context
+        self.on_next(action, prev_state)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            raise
+        finally:
+            self._current_context = None
 
     def on_next(self, action: Action[Any], prev_state: Any) -> None:
-        """
-        在 action 發送給 reducer 之前，記錄前一狀態。
-        
-        Args:
-            action: 正在 dispatch 的 Action
-            prev_state: dispatch 之前的 store.state
-        """
-        self._prev_state = deepcopy(prev_state)
+        pass  # 移除手動記錄 prev_state 的邏輯
 
     def on_complete(self, next_state: Any, action: Action[Any]) -> None:
         """
         在 reducer 和 effects 處理完 action 之後，記錄歷史。
-        
-        Args:
-            next_state: dispatch 之後的最新 store.state
-            action: 剛剛 dispatch 的 Action
         """
-        self.history.append((self._prev_state, action, deepcopy(next_state)))
+        if self._current_context:
+            self.history.append((self._current_context['prev_state'], action, next_state))
 
     def get_history(self) -> List[Tuple[Any, Action[Any], Any]]:
         """
@@ -359,37 +467,81 @@ class DevToolsMiddleware(BaseMiddleware, MiddlewareProtocol):
 
 
 # ———— PerformanceMonitorMiddleware ————
-class PerformanceMonitorMiddleware(BaseMiddleware, MiddlewareProtocol):
+class PerformanceMonitorMiddleware(BaseMiddleware):
     """
-    統計每次 dispatch 到 reducer 完成所耗時間，單位毫秒。
-
-    使用場景:
-    - 當需要分析性能瓶頸或優化 reducer 時。
+    性能監控中間件，記錄 action 處理時間。
     """
-    def __init__(self) -> None:
-        """初始化 PerformanceMonitorMiddleware。"""
-        self._start: float = 0
-
-    def on_next(self, action: Action[Any], prev_state: Any) -> None:
+    
+    def __init__(self, threshold_ms: float = 100, log_all: bool = False):
         """
-        在 action 發送給 reducer 之前，記錄開始時間。
+        初始化 PerformanceMonitorMiddleware。
         
         Args:
-            action: 正在 dispatch 的 Action
-            prev_state: dispatch 之前的 store.state
+            threshold_ms: 性能警告閾值，單位為毫秒，預設為 100 毫秒
+            log_all: 是否記錄所有 action 的性能指標，預設為 False (只記錄超過閾值的)
         """
-        self._start = time.perf_counter()
-
-    def on_complete(self, next_state: Any, action: Action[Any]) -> None:
+        self.threshold_ms = threshold_ms
+        self.log_all = log_all
+        self.metrics = {}
+        self._current_context = None
+    
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[Dict[str, Any], None, None]:
+        context = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'action_priority': getattr(action, 'priority', 'normal')
+        }
+        self._current_context = context
+        self.on_next(action, prev_state)
+        start_time = time.perf_counter()
+        try:
+            yield context
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            action_type = getattr(action, 'type', str(action))
+            if action_type not in self.metrics:
+                self.metrics[action_type] = []
+            self.metrics[action_type].append(elapsed_ms)
+            # 確保在訪問 _current_context 前檢查是否為 None
+            priority = self._current_context['action_priority'] if self._current_context else 'normal'
+            if self.log_all or elapsed_ms > self.threshold_ms:
+                print(f"⏱️ Performance: Action {action_type} (Priority: {priority}) took {elapsed_ms:.2f}ms")
+                if elapsed_ms > self.threshold_ms:
+                    print(f"⚠️ Warning: Action {action_type} exceeded threshold ({self.threshold_ms}ms)")
+            if context['next_state']:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            # 在異常情況下也確保 priority 可訪問
+            priority = self._current_context['action_priority'] if self._current_context else 'normal'
+            print(f"❌ Action {getattr(action, 'type', str(action))} failed after {elapsed_ms:.2f}ms: {err}")
+            raise
+        finally:
+            self._current_context = None
+    
+    def get_metrics(self) -> Dict[str, Dict[str, float]]:
         """
-        在 reducer 和 effects 處理完 action 之後，計算耗時。
-        
-        Args:
-            next_state: dispatch 之後的最新 store.state
-            action: 剛剛 dispatch 的 Action
+        獲取性能指標統計信息。
         """
-        elapsed = (time.perf_counter() - self._start) * 1000
-        print(f"[Perf] {action.type} took {elapsed:.2f}ms")
+        result = {}
+        for action_type, times in self.metrics.items():
+            if not times:
+                continue
+            avg_time = sum(times) / len(times)
+            max_time = max(times)
+            min_time = min(times)
+            result[action_type] = {
+                'avg': avg_time,
+                'max': max_time,
+                'min': min_time,
+                'count': len(times)
+            }
+        return result
 
 
 # ———— DebounceMiddleware ————
@@ -510,55 +662,51 @@ class AnalyticsMiddleware(BaseMiddleware, MiddlewareProtocol):
             callback: 分析回調函數，接收 (action, prev_state, next_state)
         """
         self.callback = callback
-
-    def on_next(self, action: Action[Any], prev_state: Any) -> None:
+        
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'session_id': uuid.uuid4().hex
+        }
+        self.on_next(action, prev_state, context)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action, context)
+        except Exception as err:
+            context['error'] = err
+            self.on_error(err, action)
+            raise
+        
+    def on_next(self, action: Action[Any], prev_state: Any, context: ActionContext = None) -> None:
         """
         在 action 發送給 reducer 之前調用分析回調。
         
         Args:
             action: 正在 dispatch 的 Action
             prev_state: dispatch 之前的 store.state
+            context: 上下文數據
         """
-        self.callback(action, prev_state, None)
-
-    def on_complete(self, next_state: Any, action: Action[Any]) -> None:
+        session_id = context['session_id'] if context else None
+        self.callback(action, prev_state, None, session_id=session_id)
+        
+    def on_complete(self, next_state: Any, action: Action[Any], context: ActionContext = None) -> None:
         """
         在 reducer 和 effects 處理完 action 之後調用分析回調。
         
         Args:
             next_state: dispatch 之後的最新 store.state
             action: 剛剛 dispatch 的 Action
+            context: 上下文數據
         """
-        self.callback(action, None, next_state)
+        session_id = context['session_id'] if context else None
+        self.callback(action, None, next_state, session_id=session_id)
         
-        
-# ———— ErrorMiddleware ————    
-class ErrorMiddleware(BaseMiddleware, MiddlewareProtocol):
-    """捕獲 dispatch 過程中的異常，dispatch 全域錯誤 Action，自動上報到錯誤處理系統。"""
-    def __call__(self, store: Store[Any]) -> MiddlewareFunction:
-        def middleware(next_dispatch: NextDispatch) -> DispatchFunction:
-            def dispatch(action: Action[Any]) -> Any:
-                try:
-                    return next_dispatch(action)
-                except Exception as err:
-                    # 使用新的錯誤類型
-                    action_error = ActionError(
-                        str(err), 
-                        action_type=action.type, 
-                        payload=action.payload,
-                        original_error=err
-                    )
-                    # 上報給錯誤處理器
-                    global_error_handler.handle(action_error)
-                    # 還是照常分發錯誤 Action
-                    store.dispatch(global_error({
-                        "error": str(err),
-                        "action": action.type,
-                        "error_type": action_error.__class__.__name__
-                    }))
-                    raise action_error
-            return dispatch
-        return middleware
 
 # ———— ErrorReportMiddleware ————
 class ErrorReportMiddleware(BaseMiddleware, MiddlewareProtocol):
@@ -573,23 +721,45 @@ class ErrorReportMiddleware(BaseMiddleware, MiddlewareProtocol):
         """
         self.report_file = report_file
         self.error_history: List[Dict[str, Any]] = []
-        
+        self._current_context = None
         # 註冊到全局錯誤處理器
         global_error_handler.register_handler(self._log_error)
     
+    @contextlib.contextmanager
+    def action_context(self, action: Any, prev_state: Any) -> Generator[ActionContext, None, None]:
+        context: ActionContext = {
+            'action': action,
+            'prev_state': prev_state,
+            'next_state': None,
+            'result': None,
+            'error': None,
+            'error_category': None
+        }
+        self._current_context = context
+        self.on_next(action, prev_state)
+        try:
+            yield context
+            if context['next_state'] is not None:
+                self.on_complete(context['next_state'], action)
+        except Exception as err:
+            context['error'] = err
+            context['error_category'] = 'PyStoreXError' if isinstance(err, PyStoreXError) else 'GenericError'
+            self.on_error(err, action)
+            raise
+        finally:
+            self._current_context = None       
+            
     def on_error(self, error: Exception, action: Action[Any]) -> None:
-        """記錄錯誤到錯誤歷史。"""
-        if isinstance(error, PyStoreXError):
-            self._log_error(error, action)
-        else:
-            error_info = {
-                "timestamp": time.time(),
-                "error_type": error.__class__.__name__,
-                "message": str(error),
-                "action": action.type if hasattr(action, "type") else str(action),
-                "stacktrace": traceback.format_exc()
-            }
-            self.error_history.append(error_info)
+        error_info = {
+            "timestamp": time.time(),
+            "error_type": error.__class__.__name__,
+            "message": str(error),
+            "action": action.type if hasattr(action, "type") else str(action),
+            "stacktrace": traceback.format_exc(),
+            "category": self._current_context['error_category'] if self._current_context else 'Unknown'
+        }
+        self.error_history.append(error_info)
+        self._generate_report()
     
     def _log_error(self, error: PyStoreXError, action: Optional[Action[Any]] = None) -> None:
         """記錄結構化錯誤。"""
@@ -605,26 +775,21 @@ class ErrorReportMiddleware(BaseMiddleware, MiddlewareProtocol):
         try:
             with open(self.report_file, "w") as f:
                 f.write("<html><head><title>PyStoreX Error Report</title>")
-                f.write("<style>/* CSS 樣式 */</style></head><body>")
+                f.write("<style>/* CSS styles */</style></head><body>")
                 f.write("<h1>PyStoreX Error Report</h1>")
-                
                 for error in self.error_history:
                     f.write(f"<div class='error'>")
                     f.write(f"<h2>{error['error_type']}: {error['message']}</h2>")
-                    f.write(f"<p>時間: {datetime.fromtimestamp(error['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}</p>")
+                    f.write(f"<p>Time: {datetime.fromtimestamp(error['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}</p>")
                     if 'action' in error:
-                        f.write(f"<p>觸發 Action: {error['action']}</p>")
-                    
-                    f.write("<h3>詳細信息:</h3><ul>")
+                        f.write(f"<p>Triggered Action: {error['action']}</p>")
+                    f.write("<h3>Details:</h3><ul>")
                     for k, v in error.get('details', {}).items():
                         f.write(f"<li><strong>{k}:</strong> {v}</li>")
                     f.write("</ul>")
-                    
                     if 'traceback' in error:
-                        f.write(f"<h3>堆疊追蹤:</h3><pre>{error['traceback']}</pre>")
-                    
+                        f.write(f"<h3>Stacktrace:</h3><pre>{error['traceback']}</pre>")
                     f.write("</div><hr>")
-                
                 f.write("</body></html>")
         except Exception as e:
-            print(f"無法生成錯誤報告: {e}")
+            print(f"Failed to generate error report: {e}")

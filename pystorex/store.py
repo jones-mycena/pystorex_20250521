@@ -11,6 +11,8 @@ from immutables import Map
 from reactivex import Observable, operators as ops
 from reactivex import Subject
 
+from .middleware import BaseMiddleware
+
 from .immutable_utils import to_immutable
 from .errors import StoreError, global_error_handler, handle_error
 from .reducers import ReducerFunction, ReducerManager
@@ -152,12 +154,12 @@ class Store(Generic[S]):
                 dispatch = mw(self)(dispatch)
         return dispatch
 
-    def _wrap_obj_middleware(self, mw: MiddlewareProtocol, next_dispatch: DispatchFunction) -> DispatchFunction:
+    def _wrap_obj_middleware(self, mw: BaseMiddleware, next_dispatch: DispatchFunction) -> DispatchFunction:
         """
-        包裹物件型中介軟體。
+        包裹物件型中間軟體。
 
         Args:
-            mw: 中介軟體物件，需實現 on_next、on_complete 和 on_error 方法。
+            mw: 中間軟體物件，需實現 on_next、on_complete 和 on_error 方法。
             next_dispatch: 下一層的 dispatch 方法。
 
         Returns:
@@ -166,6 +168,7 @@ class Store(Generic[S]):
         def dispatch(action: Any) -> Any:
             # 抓取 action 傳入前的舊狀態
             prev_state = self._state
+            
             # 這裡明確判斷 callable (Thunk function)
             if callable(action):
                 # 若為thunk，直接執行，不調用middleware hooks
@@ -174,26 +177,21 @@ class Store(Generic[S]):
                 except Exception as err:
                     mw.on_error(err, action)
                     raise
-
-            # 一般action物件才調用中介軟體的 on_next 方法
-            mw.on_next(action, prev_state)
-
-            try:
-                # 真正分發到 reducer / effects
+            
+            # 使用上下文管理器包裝 action 分發過程
+            with mw.action_context(action, prev_state) as context:
+                # 執行實際的 dispatch
                 result = next_dispatch(action)
-
-                # 拿到 action 分發後的新狀態
+                context['result'] = result
+                
+                # 獲取新狀態並更新上下文
                 next_state = self._state
-                # 調用中介軟體的 on_complete 方法
-                mw.on_complete(next_state, action)
+                context['next_state'] = next_state
+                
                 return result
 
-            except Exception as err:
-                # 捕捉錯誤並調用中介軟體的 on_error 方法
-                mw.on_error(err, action)
-                raise
-
         return dispatch
+
 
     def apply_middleware(self, *middlewares: Union[type, MiddlewareProtocol]) -> None:
         """

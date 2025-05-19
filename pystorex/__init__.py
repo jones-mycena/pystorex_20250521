@@ -49,18 +49,19 @@ from .errors import (
 )
 from .middleware import (
     BaseMiddleware, LoggerMiddleware, ThunkMiddleware,
-    AwaitableMiddleware, ErrorMiddleware, ImmutableEnforceMiddleware,
+    AwaitableMiddleware, ErrorMiddleware, 
     PersistMiddleware, DevToolsMiddleware, PerformanceMonitorMiddleware,
     DebounceMiddleware, BatchMiddleware, AnalyticsMiddleware
 )
 from .rx_operators import ofType
-from .reducers import create_reducer, on, ReducerManager
+from .reducers import create_reducer, on, ReducerManager,create_reducer_from_function_handler
 from .effects import Effect, create_effect, EffectsManager
 from .actions import Action, create_action
 from .store import Store, create_store, StoreModule, EffectsModule
 from .store_selectors import create_selector
 from .immutable_utils import to_immutable, to_dict, to_pydantic
 from .map_utils import update_in, batch_update
+from .action_handlers import FunctionActionHandler
 
 # 匯出所有公開 API
 __all__ = [
@@ -72,14 +73,17 @@ __all__ = [
     # Actions
     "Action", "create_action",
     
+    # Action Handlers
+    " FunctionActionHandler",
+    
     # Middleware
     "BaseMiddleware", "LoggerMiddleware", "ThunkMiddleware",
-    "AwaitableMiddleware", "ErrorMiddleware", "ImmutableEnforceMiddleware",
+    "AwaitableMiddleware", "ErrorMiddleware", 
     "PersistMiddleware", "DevToolsMiddleware", "PerformanceMonitorMiddleware",
     "DebounceMiddleware", "BatchMiddleware", "AnalyticsMiddleware",
     
     # Reducers
-    "create_reducer", "on", "ReducerManager",
+    "create_reducer", "on", "ReducerManager", "create_reducer_from_function_handler",
     
     # Effects
     "Effect", "create_effect", "EffectsManager",

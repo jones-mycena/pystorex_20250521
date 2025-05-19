@@ -7,23 +7,94 @@
 
 from typing import Dict, Any, Callable, Union, Tuple, Optional, overload, cast
 
+import collections
 from immutables import Map
 from pydantic import BaseModel
 
 from pystorex.immutable_utils import to_immutable
-from .actions import Action
+from .actions import Action,init_store, update_reducer
 from .types import (
-    S, P, ActionHandler, HandlerMap, ReducerFunction, 
-    Reducer as ReducerProtocol
+    S,
+    P,
+    ActionHandler,
+    HandlerMap,
+    ReducerFunction,
+    Reducer as ReducerProtocol,
 )
+
+from .action_handlers import FunctionActionHandler
 
 # 使用類型模組中定義的 ReducerFunction 類型
 Reducer = ReducerFunction
 
-
-def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler], Dict[str, ActionHandler]]) -> ReducerFunction[S]:
+def create_reducer_from_function_handler(handler: FunctionActionHandler[S]) -> ReducerFunction[S]:
     """
-    創建一個 reducer 函式，用於處理狀態變更。
+    從 FunctionActionHandler 創建一個 reducer 函數。
+    
+    Args:
+        handler: FunctionActionHandler 實例
+        
+    Returns:
+        一個符合 ReducerFunction 接口的 reducer 函數
+        
+    範例:
+        ```python
+        # 創建 FunctionActionHandler
+        handler = create_handler(initial_state)
+        
+        @handler.register("increment")
+        def handle_increment(state, action):
+            return state.set("count", state["count"] + 1)
+            
+        @handler.register("decrement")
+        def handle_decrement(state, action):
+            return state.set("count", state["count"] - 1)
+            
+        # 從 handler 創建 reducer
+        counter_reducer = create_reducer_from_function_handler(handler)
+        ```
+    """
+    def reducer(state: S = handler.initial_state, action: Optional[Action[Any]] = None) -> S:
+        if action is None:
+            return state
+            
+        # 檢查是否為未知的 action type，且不在忽略清單中
+        if (hasattr(handler, "has_handler") and 
+            not handler.has_handler(action.type) and 
+            hasattr(reducer, "_log_unknown") and 
+            action.type not in [a.type for a in reducer._ignored_actions]):
+            print(f"Warning: Handling unknown action type: {action.type}")
+            
+        result = handler(state, action)
+        
+        # 如果結果和輸入相同，直接返回，避免不必要的轉換
+        if result is state:
+            return state
+            
+        # 確保結果是不可變的 Map
+        if isinstance(result, Map):
+            return result
+        else:
+            # 如果 handler 返回了非 Map 對象，統一轉換
+            return to_immutable(result)
+    
+    # 設定 reducer 的元資料
+    reducer.initial_state = handler.initial_state  # type: ignore
+    reducer.original_type = None  # type: ignore
+    reducer.handlers = {}  # type: ignore  # 我們不再使用 handlers 字典
+    # 添加日誌控制標誌
+    reducer._log_unknown = False  # type: ignore
+    reducer._ignored_actions = [init_store, update_reducer]  # type: ignore
+    
+    return reducer
+
+
+def create_reducer(
+    initial_state: S,
+    *handlers: Union[Tuple[str, ActionHandler], Dict[str, ActionHandler]],
+) -> ReducerFunction[S]:
+    """
+    創建一個 reducer 函式，使用 defaultdict 簡化狀態管理。
 
     Args:
         initial_state: 初始狀態。
@@ -31,13 +102,13 @@ def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler],
 
     Returns:
         一個 reducer 函式，根據 action 的類型執行對應的處理邏輯。
-        
+
     範例:
         >>> # 創建一個計數器 reducer
         >>> increment = create_action("[Counter] Increment")
         >>> decrement = create_action("[Counter] Decrement")
         >>> reset = create_action("[Counter] Reset")
-        >>> 
+        >>>
         >>> counter_reducer = create_reducer(
         ...     0,  # 初始狀態
         ...     on(increment, lambda state, action: state + 1),
@@ -45,23 +116,28 @@ def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler],
         ...     on(reset, lambda state, action: 0)
         ... )
     """
-    action_handlers: HandlerMap = {}  # 儲存 action 類型與處理函式的對應關係
-        
+    # 使用 defaultdict 處理未知的 action 類型，預設返回原始狀態
+    action_handlers = collections.defaultdict(
+        # 預設處理器，當找不到對應的 action.type 時使用
+        lambda: lambda state, _: state
+    )
+
     # 記錄原始類型以便在需要時轉換回來
-    original_type = initial_state.__class__ if isinstance(initial_state, BaseModel) else None
-    
+    original_type = (
+        initial_state.__class__ if isinstance(initial_state, BaseModel) else None
+    )
+
     # 轉換初始狀態為不可變 Map
     immutable_initial_state = to_immutable(initial_state)
-    
+
+    # 處理傳入的 handlers
     for handler in handlers:
         if isinstance(handler, tuple) and len(handler) == 2:
-            # 如果 handler 是元組，則解構為 action 類型與處理函式
             action_type, handler_fn = handler
             action_handlers[action_type] = handler_fn
         else:
-            # 如果 handler 是字典，則直接更新到 action_handlers
             action_handlers.update(cast(Dict[str, ActionHandler], handler))
-    
+
     def reducer(state: S = initial_state, action: Optional[Action[Any]] = None) -> S:
         """
         Reducer 函式，根據 action 處理狀態變更。
@@ -74,37 +150,54 @@ def create_reducer(initial_state: S, *handlers: Union[Tuple[str, ActionHandler],
             新的狀態，如果沒有對應的處理器則返回原狀態。
         """
         if action is None:
-            return state  # 如果沒有 action，返回當前狀態
-            
-        handler = action_handlers.get(action.type)  # 根據 action 類型查找處理函式
-        if handler: 
-            # 調用 handler 獲取結果
-            result = handler(state, action)
-            
-            # 確保結果是不可變的 Map
-            if isinstance(result, Map):
-                return result
-            else:
-                # 如果 handler 返回了非 Map 對象 (例如 Pydantic 或字典)，統一轉換
-                return to_immutable(result)
-        return state  # 如果沒有對應處理函式，返回原狀態
-    
+            return state
+        # 檢查是否為未知的 action type，且不在忽略清單中
+        if (action.type not in action_handlers.keys() and 
+            hasattr(reducer, "_log_unknown") and 
+            action.type not in [a.type for a in reducer._ignored_actions]):
+            print(f"Warning: Handling unknown action type: {action.type}")
+
+        # 使用 defaultdict 直接獲取處理器，不需要額外的檢查
+        handler = action_handlers[action.type]
+
+        # 調用 handler 獲取結果
+        result = handler(state, action)
+
+        # 如果結果和輸入相同，直接返回，避免不必要的轉換
+        if result is state:
+            return state
+        # 確保結果是不可變的 Map
+        if isinstance(result, Map):
+            return result
+        else:
+            # 如果 handler 返回了非 Map 對象 (例如 Pydantic 或字典)，統一轉換
+            return to_immutable(result)
+
     # 設定 reducer 的元資料
     reducer.initial_state = immutable_initial_state  # type: ignore
     reducer.original_type = original_type  # type: ignore
-    reducer.handlers = action_handlers  # type: ignore
-    
+    reducer.handlers = dict(action_handlers)  # type: ignore 轉換為普通字典以保持兼容性
+    reducer._ignored_actions = [init_store, update_reducer]  # type: ignore
+
     return reducer
 
 
 @overload
-def on(action_creator: Callable[..., Action[P]], handler: Callable[[S, Action[P]], S]) -> Dict[str, ActionHandler]: ...
+def on(
+    action_creator: Callable[..., Action[P]], handler: Callable[[S, Action[P]], S]
+) -> Dict[str, ActionHandler]: ...
+
 
 @overload
-def on(action_type: str, handler: Callable[[S, Action[Any]], S]) -> Dict[str, ActionHandler]: ...
+def on(
+    action_type: str, handler: Callable[[S, Action[Any]], S]
+) -> Dict[str, ActionHandler]: ...
 
-def on(action_creator_or_type: Union[Callable[..., Action[Any]], str], 
-       handler: Callable[[S, Action[Any]], S]) -> Dict[str, ActionHandler]:
+
+def on(
+    action_creator_or_type: Union[Callable[..., Action[Any]], str],
+    handler: Callable[[S, Action[Any]], S],
+) -> Dict[str, ActionHandler]:
     """
     創建一個 action 類型與處理函式的映射，同時包裝 handler 以只處理特定類型的 action。
 
@@ -115,13 +208,13 @@ def on(action_creator_or_type: Union[Callable[..., Action[Any]], str],
     Returns:
         一個包含 {action_type: wrapped_handler} 的字典。
     """
-    if callable(action_creator_or_type) and hasattr(action_creator_or_type, 'type'):
+    if callable(action_creator_or_type) and hasattr(action_creator_or_type, "type"):
         # 如果是 action 創建器函式，則提取其類型
         action_type = action_creator_or_type.type
     else:
         # 否則直接將其轉為字串作為類型
         action_type = str(action_creator_or_type)
-    
+
     # 包裝 handler 以便它只處理特定類型的 action
     def wrapped_handler(state: S, action: Action[Any]) -> S:
         # 由於 reducer 已經檢查了 action.type，這裡其實可以不再檢查
@@ -129,7 +222,7 @@ def on(action_creator_or_type: Union[Callable[..., Action[Any]], str],
         if action.type == action_type:
             return handler(state, action)
         return state
-    
+
     return {action_type: wrapped_handler}
 
 
@@ -141,11 +234,14 @@ class ReducerManager:
         _feature_reducers: 儲存每個功能模組的 reducer。
         _state: 儲存最新的整個 root state。
     """
+
     def __init__(self) -> None:
         """
         初始化 ReducerManager，創建空的 reducers 和狀態儲存。
         """
-        self._feature_reducers: Dict[str, ReducerFunction] = {}  # 儲存功能模組的 reducers
+        self._feature_reducers: Dict[str, ReducerFunction] = (
+            {}
+        )  # 儲存功能模組的 reducers
         self._state: Dict[str, Any] = {}  # 儲存最新的 root state
 
     def add_reducer(self, feature_key: str, reducer: ReducerFunction) -> None:
@@ -189,7 +285,11 @@ class ReducerManager:
         """
         return self._feature_reducers.copy()
 
-    def reduce(self, state: Optional[Union[Dict[str, Any], Map]] = None, action: Optional[Action[Any]] = None) -> Map:
+    def reduce(
+        self,
+        state: Optional[Union[Dict[str, Any], Map]] = None,
+        action: Optional[Action[Any]] = None,
+    ) -> Map:
         """
         使用所有註冊的 reducers 處理 action 並返回新狀態。
 
