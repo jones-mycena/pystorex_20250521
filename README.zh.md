@@ -19,7 +19,7 @@
   <a href="https://deepwiki.com/JonesHong/pystorex"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
-輕量級 Python 狀態管理函式庫，靈感來自 NgRx/Redux 模式及 ReactiveX for Python (`reactivex`)。使用 reducer 管理應用狀態，使用 effects 處理副作用，支援 middleware 組合以及高效選擇器。  
+輕量級 Python 狀態管理函式庫，靈感來自 NgRx/Redux 模式及 ReactiveX for Python (`reactivex`)。使用 reducer 管理應用狀態，使用 effects 處理副作用，支援 middleware 組合以及高效選擇器。
 
 ---
 
