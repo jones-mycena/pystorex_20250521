@@ -17,7 +17,7 @@
   <a href="https://github.com/JonesHong/pystorex/blob/master/LICENSE">
     <img alt="License" src="https://img.shields.io/github/license/JonesHong/pystorex.svg">
   </a>
-  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/JonesHong/pystorex)
+  <a href="https://deepwiki.com/JonesHong/pystorex"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 A lightweight Python state management library inspired by NgRx/Redux patterns and ReactiveX for Python (`reactivex`). Manage application state with reducers, handle side effects with effects, compose middleware, and select state slices efficiently.
