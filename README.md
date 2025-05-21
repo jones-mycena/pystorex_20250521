@@ -1,23 +1,23 @@
-# Pystorex
+# Pystorex_20250521
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JonesHong/pystorex/refs/heads/master/assets/images/logo.png" alt="pystorex icon" width="200"/>
+  <img src="https://raw.githubusercontent.com/jones-mycena/pystorex_20250521/refs/heads/master/assets/images/logo.png" alt="pystorex_20250521 icon" width="200"/>
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/pystorex/">
-    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex.svg">
+  <a href="https://pypi.org/project/pystorex_20250521/">
+    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex_20250521.svg">
   </a>
-  <a href="https://pypi.org/project/pystorex/">
-    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex.svg">
+  <a href="https://pypi.org/project/pystorex_20250521/">
+    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex_20250521.svg">
   </a>
-  <a href="https://joneshong.github.io/pystorex/en/index.html">
+  <a href="https://joneshong.github.io/pystorex_20250521/en/index.html">
     <img alt="Documentation" src="https://img.shields.io/badge/docs-ghpages-blue.svg">
   </a>
-  <a href="https://github.com/JonesHong/pystorex/blob/master/LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/JonesHong/pystorex.svg">
+  <a href="https://github.com/jones-mycena/pystorex_20250521/blob/master/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/jones-mycena/pystorex_20250521.svg">
   </a>
-  <a href="https://deepwiki.com/JonesHong/pystorex"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://deepwiki.com/jones-mycena/pystorex_20250521"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 A lightweight Python state management library inspired by NgRx/Redux patterns and ReactiveX for Python (`reactivex`). Manage application state with reducers, handle side effects with effects, compose middleware, and select state slices efficiently.
@@ -39,7 +39,7 @@ A lightweight Python state management library inspired by NgRx/Redux patterns an
 ## Installation
 
 ```bash
-pip install pystorex
+pip install pystorex_20250521
 ```
 > Requires Python 3.9+ support.
 
@@ -56,11 +56,11 @@ from typing_extensions import TypedDict
 from reactivex import operators as ops
 from immutables import Map
 
-from pystorex.actions import create_action
-from pystorex import create_store, create_reducer, on, create_effect
-from pystorex.store_selectors import create_selector
-from pystorex.middleware import LoggerMiddleware
-from pystorex.map_utils import batch_update
+from pystorex_20250521.actions import create_action
+from pystorex_20250521 import create_store, create_reducer, on, create_effect
+from pystorex_20250521.store_selectors import create_selector
+from pystorex_20250521.middleware import LoggerMiddleware
+from pystorex_20250521.map_utils import batch_update
 
 # 1. Define state model (TypedDict)
 class CounterState(TypedDict):
