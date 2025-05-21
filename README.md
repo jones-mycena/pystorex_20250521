@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/pystorex_20250521/">
-    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex_20250521.svg">
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="PyPI version" src="https://img.shields.io/pypi/v/pystorex.svg">
   </a>
-  <a href="https://pypi.org/project/pystorex_20250521/">
-    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex_20250521.svg">
+  <a href="https://pypi.org/project/pystorex/">
+    <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/pystorex.svg">
   </a>
   <a href="https://joneshong.github.io/pystorex_20250521/en/index.html">
     <img alt="Documentation" src="https://img.shields.io/badge/docs-ghpages-blue.svg">
